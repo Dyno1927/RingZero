@@ -6,10 +6,10 @@ export default defineConfig({
   output: 'static',
   integrations: [
     starlight({
-      title: 'SysCore',
+      title: '[name]',
       description: 'Systems programming, explained from the metal up. C and C++ internals, memory, and OS interfaces.',
       social: {
-        github: 'https://github.com/Dyno1927/Sys-Core',
+        github: 'https://github.com/Dyno1927/[name]',
       },
       customCss: ['./src/styles/custom.css'],
       sidebar: [
@@ -20,9 +20,9 @@ export default defineConfig({
               label: 'Fundamentals',
               collapsed: false,
               items: [
-                { label: 'Pointers', slug: 'c/fundamentals/pointers' },
-                { label: 'Arrays', slug: 'c/fundamentals/arrays' },
-                { label: 'Structures', slug: 'c/fundamentals/structures' },
+                { label: 'Pointers', link: '/c/fundamentals/pointers' },
+                { label: 'Arrays', link: '/c/fundamentals/arrays' },
+                { label: 'Structures', link: '/c/fundamentals/structures' },
               ],
             },
             {
@@ -30,8 +30,8 @@ export default defineConfig({
               badge: 'Planned',
               collapsed: true,
               items: [
-                { label: 'Malloc Family', slug: 'c/memory/malloc-family' },
-                { label: 'Dangling Pointers', slug: 'c/memory/dangling-pointers' },
+                { label: 'Malloc Family', link: '/c/memory/malloc-family' },
+                { label: 'Dangling Pointers', link: '/c/memory/dangling-pointers' },
               ],
             },
           ],
@@ -43,8 +43,8 @@ export default defineConfig({
               label: 'Fundamentals',
               collapsed: false,
               items: [
-                { label: 'Classes', slug: 'cpp/fundamentals/classes' },
-                { label: 'RAII', slug: 'cpp/fundamentals/raii' },
+                { label: 'Classes', link: '/cpp/fundamentals/classes' },
+                { label: 'RAII', link: '/cpp/fundamentals/raii' },
               ],
             },
             {
@@ -52,7 +52,7 @@ export default defineConfig({
               badge: 'Planned',
               collapsed: true,
               items: [
-                { label: 'Threads & Mutexes', slug: 'cpp/concurrency/threads' },
+                { label: 'Threads & Mutexes', link: '/cpp/concurrency/threads' },
               ],
             },
           ],
@@ -60,26 +60,26 @@ export default defineConfig({
         {
           label: 'Roadmaps',
           items: [
-            { label: 'Learning C (Beginner to Intermediate)', slug: 'roadmaps/learning-c' },
+            { label: 'Learning C (Beginner to Intermediate)', link: '/roadmaps/learning-c' },
           ],
         },
         {
           label: 'Libraries',
           items: [
-            { label: 'libcurl', slug: 'libraries/libcurl' },
+            { label: 'libcurl', link: '/libraries/libcurl' },
           ],
         },
         {
           label: 'APIs & SDKs',
           items: [
-            { label: 'POSIX File I/O', slug: 'apis/posix-file-io' },
+            { label: 'POSIX File I/O', link: '/apis/posix-file-io' },
           ],
         },
         {
           label: 'Projects',
           items: [
-            { label: 'CLI Task Manager (Beginner)', slug: 'projects/cli-task-manager' },
-            { label: 'Thread Pool (Intermediate)', slug: 'projects/thread-pool' },
+            { label: 'CLI Task Manager (Beginner)', link: '/projects/cli-task-manager' },
+            { label: 'Thread Pool (Intermediate)', link: '/projects/thread-pool' },
           ],
         },
       ],
