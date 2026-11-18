@@ -15,23 +15,29 @@ hero:
       variant: secondary
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { LinkCard, CardGrid } from "@astrojs/starlight/components";
 
 ## Explore
 
 <CardGrid>
-  <Card title="Roadmaps" icon="open-book">
-    Beginner to advanced, in order. Structured paths through C and systems
-    concepts.
-  </Card>
-  <Card title="Standard Library" icon="document">
-    Headers, functions, versions, and memory safety implications.
-  </Card>
-  <Card title="APIs and SDKs" icon="setting">
-    POSIX, Win32, Vulkan, and LLVM interface guides with exact signatures.
-  </Card>
-  <Card title="Projects" icon="puzzle">
-    Parser, allocator, thread pool, VM — with buildable stages and hidden
-    reference solutions.
-  </Card>
+  <LinkCard
+    title="Roadmaps"
+    description="Beginner to advanced, in order. Structured paths through C and systems concepts."
+    href="/roadmaps/learning-c/"
+  />
+  <LinkCard
+    title="Language Tracks"
+    description="C & C++ language internals: variables, control flow, memory, RAII, and concurrency."
+    href="/c/fundamentals/variables-and-types/"
+  />
+  <LinkCard
+    title="APIs & SDKs"
+    description="POSIX File I/O, Berkeley Sockets, and systems interface guides with exact signatures."
+    href="/apis/posix-file-io/"
+  />
+  <LinkCard
+    title="Projects"
+    description="CLI task manager, thread pool, and arena allocator — with buildable stages and hidden reference solutions."
+    href="/projects/cli-task-manager/"
+  />
 </CardGrid>

@@ -16,10 +16,11 @@ export default defineConfig({
       sidebar: [
         {
           label: "C",
+          collapsed: true,
           items: [
             {
               label: "Fundamentals",
-              collapsed: false,
+              collapsed: true,
               items: [
                 {
                   label: "Variables & Types",
@@ -44,7 +45,7 @@ export default defineConfig({
             },
             {
               label: "Memory",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { label: "The malloc Family", slug: "c/memory/malloc-family" },
                 {
@@ -57,10 +58,11 @@ export default defineConfig({
         },
         {
           label: "C++",
+          collapsed: true,
           items: [
             {
               label: "Fundamentals",
-              collapsed: false,
+              collapsed: true,
               items: [
                 {
                   label: "Moving from C to C++",
@@ -79,7 +81,7 @@ export default defineConfig({
             },
             {
               label: "Concurrency",
-              collapsed: false,
+              collapsed: true,
               items: [
                 { label: "Threads & Mutexes", slug: "cpp/concurrency/threads" },
               ],
@@ -88,6 +90,7 @@ export default defineConfig({
         },
         {
           label: "Roadmaps",
+          collapsed: true,
           items: [
             { label: "Learning C", slug: "roadmaps/learning-c" },
             { label: "Modern C++ for Systems", slug: "roadmaps/modern-cpp" },
@@ -95,10 +98,12 @@ export default defineConfig({
         },
         {
           label: "Libraries",
+          collapsed: true,
           items: [{ label: "libcurl", slug: "libraries/libcurl" }],
         },
         {
           label: "APIs & SDKs",
+          collapsed: true,
           items: [
             { label: "POSIX File I/O", slug: "apis/posix-file-io" },
             { label: "POSIX Berkeley Sockets", slug: "apis/posix-sockets" },
@@ -106,6 +111,7 @@ export default defineConfig({
         },
         {
           label: "Projects",
+          collapsed: true,
           items: [
             { label: "CLI Task Manager", slug: "projects/cli-task-manager" },
             { label: "Thread Pool", slug: "projects/thread-pool" },
