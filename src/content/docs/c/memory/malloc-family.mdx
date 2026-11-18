@@ -1,0 +1,132 @@
+---
+title: The malloc Family & Heap Internals
+description: Memory allocation mechanics, brk vs mmap, chunk layouts, and heap fragmentation in C.
+---
+
+Dynamic memory allocation in C is managed by the C standard library (`<stdlib.h>`). While high-level languages present dynamic memory as an infinite pool, systems programming requires understanding how user-space allocators interact with the OS kernel and manage physical/virtual memory.
+
+## Kernel Foundations: `brk` vs `mmap`
+
+User-space allocators (such as glibc's `ptmalloc`, Google's `tcmalloc`, or FreeBSD's `jemalloc`) do not make a system call for every `malloc()`. System calls incur kernel context-switch overhead (several hundred CPU cycles). Instead, allocators request large virtual memory blocks from the kernel via two mechanisms:
+
+1. **`brk` / `sbrk`**: Grows or shrinks the process's **program break** (the boundary of the data segment). Best for small, contiguous heap expansion.
+2. **`mmap` (Anonymous Mapping)**: Requests independent page-aligned memory regions anywhere in the address space using `MAP_ANONYMOUS | MAP_PRIVATE`. In glibc, allocations exceeding the `M_MMAP_THRESHOLD` (typically 128 KB) bypass the main heap arena and are serviced directly by `mmap`.
+
+```text
+Virtual Address Space (64-bit)
+┌───────────────────────────────────────────┐ High Addresses
+│ Kernel Space (Protected)                  │
+├───────────────────────────────────────────┤
+│ Stack (Grows Downward)                    │
+│   ↓                                       │
+│                                           │
+│ Memory Mapping Segment (mmap, shared libs)│
+│                                           │
+│   ↑                                       │
+│ Heap (Grows Upward via brk)               │
+├───────────────────────────────────────────┤
+│ Program Break (brk pointer)               │
+├───────────────────────────────────────────┤
+│ .bss (Uninitialized Globals)              │
+│ .data (Initialized Globals)               │
+│ .text (Machine Instructions)              │
+└───────────────────────────────────────────┘ Low Addresses
+```
+
+## The Four Core Allocation Functions
+
+### 1. `void *malloc(size_t size)`
+
+Allocates `size` uninitialized bytes.
+
+- Returns a pointer aligned to `max_align_t` (typically 16 bytes on 64-bit architectures), suitable for any primitive data type.
+- The memory contents are indeterminate: reading before writing is undefined behavior.
+- Returns `NULL` if the virtual address space is exhausted.
+
+```c
+int *buffer = malloc(1024 * sizeof(int));
+if (!buffer) {
+    perror("malloc failed");
+    return -1;
+}
+```
+
+:::caution[Integer Overflow in Size Calculations]
+Multiplying element counts without overflow validation can wrap around 32-bit or 64-bit integer limits:
+
+```c
+size_t count = get_untrusted_count();
+// If count * sizeof(int) overflows, malloc allocates fewer bytes than expected,
+// leading to an immediate heap buffer overflow.
+int *arr = malloc(count * sizeof(int)); // VULNERABILITY
+```
+
+Use `calloc` or validated multiplication helpers (`__builtin_mul_overflow`) to eliminate this vulnerability.
+:::
+
+### 2. `void *calloc(size_t nmemb, size_t size)`
+
+Allocates memory for an array of `nmemb` elements of `size` bytes each and initializes all bits to zero.
+
+- **Built-in Overflow Protection**: `calloc` internally checks whether `nmemb * size` exceeds `SIZE_MAX`. If overflow occurs, it returns `NULL` and sets `errno = ENOMEM`.
+- **Zero-Page Optimization**: Large allocations serviced via `mmap` are mapped to the OS kernel's copy-on-write zero page, avoiding immediate physical RAM commitment until the memory is dirtied.
+
+### 3. `void *realloc(void *ptr, size_t size)`
+
+Changes the size of the previously allocated memory block pointed to by `ptr`:
+
+- If possible, it expands or contracts the block in-place.
+- If adjacent space is unavailable, it allocates a new block, copies the existing contents up to the minimum of old and new sizes, frees the old block, and returns the new pointer.
+
+```c
+// CRITICAL GOTCHA: Never assign directly to the original pointer
+// ANTI-PATTERN: If realloc fails and returns NULL, the original pointer is overwritten,
+// permanently leaking the original memory block!
+ptr = realloc(ptr, new_size); // MEMORY LEAK RISK
+
+// CORRECT IDIOM:
+void *new_ptr = realloc(ptr, new_size);
+if (!new_ptr) {
+    // Handle error; 'ptr' remains valid and must still be freed
+    free(ptr);
+    return -1;
+}
+ptr = new_ptr;
+```
+
+### 4. `void free(void *ptr)`
+
+Deallocates the memory block previously returned by `malloc`, `calloc`, or `realloc`.
+
+- Passing `NULL` to `free()` is guaranteed by the ISO C standard to be a safe no-op.
+- Calling `free()` on an already freed pointer (**Double Free**) corrupts allocator metadata and is undefined behavior.
+- Calling `free()` on a pointer not returned by the allocator (such as a stack address or middle of an array) corrupts heap state immediately.
+
+## Allocator Metadata and Chunk Architecture
+
+Standard allocators prepend a hidden metadata header to every allocated chunk:
+
+```text
+glibc Heap Chunk Layout:
+┌───────────────────────────┬───────────────────────────┐
+│ Previous Chunk Size (if previous chunk is free)       │
+├───────────────────────────┬───────────────────────────┤
+│ Chunk Size                │ A │ M │ P │ (Flags)       │
+├───────────────────────────┴───────────────────────────┤ ← Pointer returned to user
+│ User Data Payload...                                  │
+│ ...                                                   │
+└───────────────────────────────────────────────────────┘
+```
+
+The lower 3 bits of the `Chunk Size` field store status flags because chunks are always aligned to 8- or 16-byte multiples:
+
+- **`A` (`NON_MAIN_ARENA`)**: Chunk belongs to a secondary thread arena.
+- **`M` (`IS_MMAPPED`)**: Chunk was obtained directly via `mmap`.
+- **`P` (`PREV_INUSE`)**: 1 if the previous adjacent chunk is allocated; 0 if free (used for immediate coalescing).
+
+When a program writes before the start of its buffer (heap underflow) or past its allocated size (heap overflow), it overwrites these chunk headers, resulting in crashes during subsequent `malloc()` or `free()` calls.
+
+## Fragmentation: Internal vs External
+
+- **Internal Fragmentation**: Occurs when the allocator rounds up the requested size to satisfy alignment or minimum chunk constraints (e.g., requesting 5 bytes receives a 24-byte chunk).
+- **External Fragmentation**: Occurs when free memory is broken into many small, non-contiguous slices. Total free memory may be 50 MB, but an allocation request for 4 MB fails because no single contiguous 4 MB block exists.

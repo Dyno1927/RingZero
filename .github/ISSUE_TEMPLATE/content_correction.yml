@@ -1,0 +1,31 @@
+name: Technical Content Correction
+description: Report an inaccurate claim, incorrect function signature, or improper UB labeling.
+title: "[Correction]: "
+labels: ["content", "needs-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Accuracy is the primary objective of this site. Please provide citations from ISO standards, man-pages, or compiler specifications.
+  - type: input
+    id: page_url
+    attributes:
+      label: Page URL or File Path
+      description: Where is the inaccurate content located?
+      placeholder: e.g., /c/fundamentals/pointers or src/content/docs/c/fundamentals/pointers.mdx
+    validations:
+      required: true
+  - type: textarea
+    id: current_content
+    attributes:
+      label: Current Statement or Code
+      description: What does the text currently claim or execute?
+    validations:
+      required: true
+  - type: textarea
+    id: correction
+    attributes:
+      label: Correction & Evidence
+      description: What should it say instead, and what standard or compiler evidence supports this?
+    validations:
+      required: true

@@ -28,11 +28,13 @@ export default defineConfig({
             },
             {
               label: "Memory",
-              badge: { text: "Planned", variant: "caution" },
-              collapsed: true,
+              collapsed: false,
               items: [
-                { label: "Malloc Family (Planned)", link: "/planned" },
-                { label: "Dangling Pointers (Planned)", link: "/planned" },
+                { label: "The malloc Family", slug: "c/memory/malloc-family" },
+                {
+                  label: "Dangling Pointers & UAF",
+                  slug: "c/memory/dangling-pointers",
+                },
               ],
             },
           ],
@@ -50,10 +52,9 @@ export default defineConfig({
             },
             {
               label: "Concurrency",
-              badge: { text: "Planned", variant: "caution" },
-              collapsed: true,
+              collapsed: false,
               items: [
-                { label: "Threads & Mutexes (Planned)", link: "/planned" },
+                { label: "Threads & Mutexes", slug: "cpp/concurrency/threads" },
               ],
             },
           ],

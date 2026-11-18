@@ -1,0 +1,151 @@
+---
+title: Threads & Mutexes in C++
+description: Thread lifecycles, std::jthread, RAII lock managers, condition variables, and data race prevention in C++.
+---
+
+Modern C++ provides native multi-threading abstractions defined in `<thread>`, `<mutex>`, `<condition_variable>`, and `<atomic>`. These primitives map directly to operating system threads (e.g., POSIX `pthreads` on Linux/macOS, Windows Threads on Win32) while enforcing compile-time type safety and RAII lifetime semantics.
+
+## Thread Lifecycles: `std::thread` vs `std::jthread`
+
+When an execution thread is created, it begins executing the supplied callable immediately:
+
+```cpp
+#include <thread>
+#include <iostream>
+
+void workerTask(int id) {
+    std::cout << "Worker " << id << " executing on native handle: "
+              << pthread_self() << '\n';
+}
+
+int main() {
+    std::thread t(workerTask, 1);
+
+    // CRITICAL INVARIANT:
+    // A joinable std::thread MUST be either joined or detached before its destructor runs!
+    t.join(); // Blocks calling thread until worker finishes
+}
+```
+
+:::caution[`std::terminate` on Joinable Destruction]
+If a `std::thread` object's destructor runs while it is still joinable (`t.joinable() == true`), the C++ runtime immediately invokes `std::terminate()`, aborting the process. An unhandled exception or early return before `t.join()` will crash your program.
+:::
+
+### C++20 `std::jthread`: Automatic Join & Cancellation
+
+C++20 introduced `std::jthread` (joining thread) to solve this hazard:
+
+1. **RAII Teardown**: Automatically calls `request_stop()` and joins in its destructor.
+2. **Cooperative Cancellation**: Supplies a `std::stop_token` to monitor cancellation requests cleanly.
+
+```cpp
+#include <thread>
+#include <chrono>
+
+void cancellableWorker(std::stop_token stoken) {
+    while (!stoken.stop_requested()) {
+        // Perform work in chunks
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+int main() {
+    std::jthread jt(cancellableWorker);
+    // When jt goes out of scope here:
+    // 1. jt requests stop automatically
+    // 2. jt joins automatically without risking std::terminate()
+}
+```
+
+## Data Races and Mutual Exclusion
+
+A **data race** occurs when:
+
+1. Two or more concurrent threads access the same memory location.
+2. At least one access is a write.
+3. No synchronization (mutex or atomic operation) coordinates the accesses.
+
+In C++, a data race is **Undefined Behavior**.
+
+### RAII Lock Management
+
+Never call `.lock()` and `.unlock()` manually on a mutex. Use standard RAII wrappers:
+
+```cpp
+#include <mutex>
+
+std::mutex resourceMutex;
+int sharedData = 0;
+
+void safeUpdate() {
+    // 1. std::lock_guard: Simple, non-copyable, zero-overhead scoped lock
+    std::lock_guard<std::mutex> lock(resourceMutex);
+    sharedData++;
+} // Automatically unlocked here
+
+void advancedUpdate() {
+    // 2. std::unique_lock: Supports deferred locking, manual early unlock,
+    // and transfer of lock ownership. Required by std::condition_variable.
+    std::unique_lock<std::mutex> lock(resourceMutex);
+    sharedData += 10;
+    lock.unlock(); // Can unlock early before performing non-critical work
+}
+```
+
+### Deadlock-Free Multi-Locking: `std::scoped_lock` (C++17)
+
+Acquiring multiple mutexes in differing orders across threads causes deadlocks. `std::scoped_lock` uses a deadlock-avoidance algorithm (similar to Chandy-Misra or resource ordering) to lock any number of mutexes simultaneously:
+
+```cpp
+struct Account {
+    std::mutex mtx;
+    int balance;
+};
+
+void transfer(Account &from, Account &to, int amount) {
+    // Acquires both mutexes without risk of deadlocks, regardless of argument order
+    std::scoped_lock lock(from.mtx, to.mtx);
+    from.balance -= amount;
+    to.balance += amount;
+}
+```
+
+## Condition Variables & Predicate Waiting
+
+A `std::condition_variable` allows threads to sleep efficiently until signaled by another thread:
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+
+template <typename T>
+class ThreadSafeQueue {
+private:
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::queue<T> queue;
+
+public:
+    void push(T value) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            queue.push(std::move(value));
+        }
+        cv.notify_one(); // Wake up one waiting worker
+    }
+
+    T pop() {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        // PREDICATE WAIT:
+        // Always pass a lambda predicate to guard against spurious wakeups!
+        // cv.wait internally releases the mutex, sleeps, and re-acquires upon wake.
+        cv.wait(lock, [this] { return !queue.empty(); });
+
+        T val = std::move(queue.front());
+        queue.pop();
+        return val;
+    }
+};
+```

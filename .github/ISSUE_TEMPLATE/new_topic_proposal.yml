@@ -1,0 +1,35 @@
+name: New Topic Proposal
+description: Propose a new systems programming topic or project specification.
+title: "[Proposal]: "
+labels: ["proposal", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting large articles or reference projects, discuss the proposed IA slot, target depth, and systems focus.
+  - type: input
+    id: topic_title
+    attributes:
+      label: Topic Title
+      placeholder: e.g., Linux io_uring Architecture or Custom Arena Allocator
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Track / Category
+      options:
+        - C Language Track
+        - C++ Language Track
+        - Operating System APIs
+        - Libraries & SDKs
+        - Milestone Project
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_outline
+    attributes:
+      label: Technical Outline
+      description: What low-level mechanisms, memory models, and standard APIs will be covered?
+    validations:
+      required: true

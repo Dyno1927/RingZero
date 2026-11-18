@@ -1,0 +1,106 @@
+---
+title: Dangling Pointers & Use-After-Free
+description: Lifetime expiration, heap metadata corruption, Use-After-Free exploitation mechanics, and sanitizer detection in C.
+---
+
+A **dangling pointer** is a pointer that references a memory address whose associated storage has already been released or reallocated. Dereferencing or mutating memory through a dangling pointer constitutes a **Use-After-Free (UAF)** violation — one of the most critical classes of vulnerabilities in systems software.
+
+## Two Origins of Dangling Pointers
+
+### 1. Stack Lifetime Expiration
+
+Local variables allocated on the stack are destroyed when their enclosing scope terminates:
+
+```c
+// ANTI-PATTERN: Returning pointer to stack-allocated memory
+int *get_value(void) {
+    int local_num = 42;
+    return &local_num; // WARNING: stack frame destroyed upon return
+}
+
+void innocent_function(void) {
+    int unrelated_data[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+}
+
+int main(void) {
+    int *p = get_value();
+    // At this moment, p points to invalid stack space.
+    innocent_function(); // Reuses the stack frame!
+    printf("%d\n", *p);  // UNDEFINED BEHAVIOR: reads overwritten stack frame
+}
+```
+
+Modern compilers emit strict warnings (`-Wreturn-local-addr`) when a function attempts to return an address from its own stack frame.
+
+### 2. Heap Deallocation (Use-After-Free)
+
+Calling `free(ptr)` informs the heap allocator that the memory block is available for reuse. It **does not** modify or erase the pointer variable itself:
+
+```c
+typedef struct {
+    void (*handler)(const char *);
+    char buffer[64];
+} RequestContext;
+
+RequestContext *ctx = malloc(sizeof(RequestContext));
+ctx->handler = default_handler;
+
+// 1. Context deallocated
+free(ctx);
+// GOTCHA: 'ctx' still holds the address (0x5555...); it is now dangling.
+
+// 2. Later allocation reclaims the same address
+char *untrusted_input = malloc(sizeof(RequestContext));
+strcpy(untrusted_input, "attacker_controlled_payload");
+
+// 3. Use-After-Free:
+// ctx->handler is invoked, but the memory now contains untrusted_input!
+ctx->handler("execute"); // CRITICAL SECURITY VULNERABILITY (Arbitrary Code Execution)
+```
+
+## Double Free Vulnerabilities
+
+Calling `free()` twice on the same memory pointer without an intervening allocation corrupts the allocator's internal free-list data structures:
+
+```c
+void *p = malloc(64);
+free(p);
+// ... intervening logic ...
+free(p); // UNDEFINED BEHAVIOR: Double Free
+```
+
+In older or unhardened allocators, double-freeing a chunk inserts the same memory block into the free-list twice. Subsequent allocations return the exact same memory chunk to two separate, unrelated parts of the program, leading to memory aliasing, data corruption, and privilege escalation.
+
+## Defensive Mitigations
+
+### 1. Pointer Poisoning & Zeroing
+
+Immediately overwrite pointers with `NULL` after deallocation. Because `free(NULL)` is guaranteed safe, accidental secondary frees are rendered harmless:
+
+```c
+#define SAFE_FREE(ptr) do { \
+    free(ptr);              \
+    (ptr) = NULL;           \
+} while (0)
+```
+
+:::caution[Limitations of Pointer Zeroing]
+Pointer zeroing only clears the specific pointer variable passed into `SAFE_FREE`. If other parts of the program retain aliases (copies of the address), those alias pointers remain dangling!
+:::
+
+### 2. AddressSanitizer (ASan) & Shadow Memory
+
+The most reliable detection mechanism during development and testing is LLVM AddressSanitizer (`-fsanitize=address`):
+
+```bash
+clang -std=c17 -Wall -Wextra -fsanitize=address -g main.c -o app
+```
+
+How ASan intercepts Use-After-Free at runtime:
+
+1. **Quarantine Queue**: When `free(p)` is called, ASan does not return the memory to the system allocator immediately. It places the chunk into a quarantined state and poisons the corresponding byte in **Shadow Memory**.
+2. **Shadow Memory Check**: The compiler instruments every memory access with a single-cycle check against shadow bytes.
+3. If code dereferences a poisoned quarantine address, ASan halts the process instantly with a detailed report showing:
+   - Where the memory was allocated (stack trace).
+   - Where the memory was freed (stack trace).
+   - Where the invalid dereference occurred (stack trace).
