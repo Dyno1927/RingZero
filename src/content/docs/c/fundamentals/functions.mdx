@@ -1,0 +1,138 @@
+---
+title: Functions & Linkage in C
+description: Stack frame mechanics, System V ABI calling conventions, pass-by-value semantics, and internal linkage in C.
+---
+
+In C, a function encapsulates executable logic. Unlike high-level languages with complex runtime call engines, calling a function in C translates directly to CPU hardware stack manipulations and register-based parameter passing.
+
+## Declaration vs. Definition
+
+1. **Function Declaration (Prototype)**: Informs the compiler about the function's name, return type, and parameter types without providing the body. Typically placed in header files (`.h`).
+2. **Function Definition**: The actual implementation generating machine code in a translation unit (`.c`).
+
+```c
+// math_utils.h (Header with prototype)
+#ifndef MATH_UTILS_H
+#define MATH_UTILS_H
+
+int add(int a, int b);
+
+#endif
+```
+
+```c
+// math_utils.c (Translation unit with definition)
+#include "math_utils.h"
+
+int add(int a, int b) {
+    return a + b;
+}
+```
+
+## Strictly Pass-by-Value Semantics
+
+C is an exclusively **pass-by-value** language. When arguments are supplied to a function, the compiler copies the values into the target parameters. The called function cannot mutate the caller's original variable:
+
+```c
+void attempt_swap(int a, int b) {
+    int tmp = a;
+    a = b;
+    b = tmp;
+} // 'a' and 'b' copies are discarded upon return; caller's variables remain untouched!
+```
+
+To modify caller variables, pass **pointers by value**. The function receives a copy of the address, enabling indirection to mutate the caller's memory:
+
+```c
+void real_swap(int *a, int *b) {
+    int tmp = *a;
+    *a = *b;
+    *b = tmp;
+} // Mutates values located at the caller's memory addresses
+```
+
+## Stack Frames & Calling Conventions (x86-64 System V ABI)
+
+When a function executes, the CPU allocates a **Stack Frame** (activation record) on top of the call stack:
+
+```text
+Higher Memory Addresses
+┌──────────────────────────────────────────────┐
+│ Caller's Stack Frame                         │
+├──────────────────────────────────────────────┤
+│ 7th+ Arguments (if function takes > 6 args)  │
+├──────────────────────────────────────────────┤
+│ Return Address (Pushed automatically by CALL)│
+├──────────────────────────────────────────────┤ ← Base Pointer (RBP)
+│ Saved RBP (Previous frame's base pointer)    │
+├──────────────────────────────────────────────┤
+│ Local Variables                              │
+│ Register Spills                              │
+├──────────────────────────────────────────────┤ ← Stack Pointer (RSP)
+Lower Memory Addresses (Grows Downward)
+```
+
+### The System V AMD64 Calling Convention
+
+On Linux, macOS, and BSD:
+
+- The first 6 integer or pointer arguments are passed directly in CPU registers: `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`.
+- Floating-point arguments are passed in SIMD registers: `XMM0` through `XMM7`.
+- Additional arguments beyond the registers are pushed onto the stack.
+- The return value is placed in `RAX` (and `RDX` for 128-bit types) or `XMM0`.
+
+Because arguments travel in fast registers rather than memory, function calls in C incur near-zero overhead.
+
+## Linkage & Visibility: `static` vs `extern`
+
+Linkage determines whether a symbol (function or global variable) is visible to other translation units during the link phase:
+
+### 1. `static` (Internal Linkage)
+
+Restricts the symbol's visibility exclusively to the current `.c` file:
+
+```c
+// Visible ONLY inside this translation unit
+static void internal_helper(void) {
+    // ...
+}
+```
+
+Benefits of `static`:
+
+- **Encapsulation**: Prevents name collisions across separate modules.
+- **Inlining Optimizations**: The compiler knows all call sites reside in this single file, allowing aggressive inlining and unused code elimination.
+
+### 2. `extern` (External Linkage)
+
+The default for non-static functions. The linker exposes the symbol globally across all compiled object files (`.o`).
+
+## Function Pointers
+
+A function pointer holds the virtual memory address of executable machine instructions in the `.text` segment:
+
+```c
+// Syntax: ReturnType (*PointerName)(ParameterTypes);
+int (*operation)(int, int);
+
+operation = add; // Assigns address of add()
+int result = operation(10, 20); // Indirect function call: 30
+```
+
+### Callback Architectures
+
+Function pointers enable generic callback and event systems, such as the standard C library `qsort`:
+
+```c
+#include <stdlib.h>
+
+// Comparison callback matching: int (*compar)(const void *, const void *)
+int compare_descending(const void *a, const void *b) {
+    int val_a = *(const int *)a;
+    int val_b = *(const int *)b;
+    return val_b - val_a;
+}
+
+int numbers[4] = {4, 1, 3, 2};
+qsort(numbers, 4, sizeof(int), compare_descending);
+```

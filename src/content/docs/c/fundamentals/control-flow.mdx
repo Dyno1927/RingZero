@@ -1,0 +1,162 @@
+---
+title: Control Flow & Loops in C
+description: Conditional branching, jump tables in switch statements, loop mechanics, and idiomatic goto cleanup in C.
+---
+
+Control flow structures dictate the order in which individual machine instructions are executed by the CPU. At the hardware level, control flow maps directly to **conditional jumps**, **unconditional jumps**, and **indirect branch targets** in assembly.
+
+## Conditionals: `if`, `else if`, `else`
+
+In C, any non-zero value evaluates as logically true; zero evaluates as false:
+
+```c
+if (fd >= 0) {
+    // True branch
+} else {
+    // False branch
+}
+```
+
+### Machine Implications & Branch Prediction
+
+Modern out-of-order CPUs use hardware **branch predictors** to speculate which path a conditional statement will take before the condition has finished computing.
+
+- If the CPU guesses correctly, execution proceeds without delay.
+- If the CPU mispredicts, the entire instruction pipeline must be flushed, costing 15–20 CPU clock cycles.
+
+In performance-critical kernel and networking code, compilers provide branch weighting intrinsics to guide code layout:
+
+```c
+// Informs compiler that 'ptr == NULL' is exceptionally rare
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#define likely(x)   __builtin_expect(!!(x), 1)
+
+if (unlikely(!ptr)) {
+    // Moved to cold section of the binary
+    return -ENOMEM;
+}
+```
+
+## Multi-Way Branching: `switch` & Jump Tables
+
+The `switch` statement evaluates an integral expression against a set of constant case labels:
+
+```c
+switch (status_code) {
+    case 200:
+        handle_ok();
+        break;
+    case 404:
+        handle_not_found();
+        break;
+    case 500:
+    case 502: // Intentional fallthrough
+        handle_server_error();
+        break;
+    default:
+        handle_unknown();
+        break;
+}
+```
+
+### How the Compiler Optimizes `switch`
+
+When case labels are densely clustered (e.g., cases 1, 2, 3, 4, 5), compilers generate a **Jump Table** — an array of code pointers stored in the `.rodata` section:
+
+```text
+Jump Table (.rodata):
+Offset 0 ──→ Pointer to code for case 0
+Offset 1 ──→ Pointer to code for case 1
+Offset 2 ──→ Pointer to code for case 2
+```
+
+In assembly, the CPU computes the target in $O(1)$ time with a single indirect jump (`jmp *%rax`), bypassing sequential comparison chains. When case values are sparse, the compiler defaults to a binary search comparison tree ($O(\log N)$).
+
+:::caution[Implicit Fallthrough]
+Omitting `break` causes execution to fall directly into subsequent cases. If intentional, document it explicitly or use the C23 `[[fallthrough]];` attribute to silence compiler warnings (`-Wimplicit-fallthrough`).
+:::
+
+## Iteration: Loops in C
+
+### 1. `while` Loop (Pre-Condition)
+
+Evaluates the condition before every iteration. If false on entry, the loop body never runs:
+
+```c
+while (remaining_bytes > 0) {
+    ssize_t n = write(fd, buf, remaining_bytes);
+    if (n <= 0) break;
+    remaining_bytes -= n;
+}
+```
+
+### 2. `do-while` Loop (Post-Condition)
+
+Executes the body at least once before evaluating the condition:
+
+```c
+do {
+    bytes_read = read(fd, buffer, sizeof(buffer));
+} while (bytes_read > 0);
+```
+
+#### The `do { ... } while(0)` Macro Idiom
+
+In systems C, multi-statement macros are universally wrapped in `do { ... } while(0)`. This guarantees the macro behaves as a single syntactically correct statement in `if-else` blocks without breaking semicolon semantics:
+
+```c
+#define LOG_ERROR(msg) do {          \
+    fprintf(stderr, "[ERR] %s\n", msg); \
+    cleanup_resources();               \
+} while (0)
+```
+
+### 3. `for` Loop
+
+Combines initialization, condition testing, and iteration stepping into a single header:
+
+```c
+// C99 loop-scoped variable
+for (size_t i = 0; i < count; i++) {
+    process_element(i);
+}
+```
+
+## The Idiomatic Systems `goto`: Reverse Cleanup
+
+While unconditional `goto` jumps are discouraged in high-level application programming, `goto` is the industry standard idiom across operating system kernels (Linux, FreeBSD, Windows kernel) for **centralized error cleanup**.
+
+Because C lacks automated C++ destructors or `finally` blocks, functions that allocate multiple sequential system resources rely on `goto` labels to unwind state in reverse order without code duplication:
+
+```c
+int initialize_device(struct Device *dev) {
+    dev->mem = malloc(BUFFER_SIZE);
+    if (!dev->mem) {
+        return -ENOMEM;
+    }
+
+    dev->fd = open("/dev/hw_reg", O_RDWR);
+    if (dev->fd < 0) {
+        goto err_free_mem;
+    }
+
+    if (pthread_mutex_init(&dev->lock, NULL) != 0) {
+        goto err_close_fd;
+    }
+
+    return 0; // Success
+
+// Error Unwinding Chain (Executed in strict reverse allocation order)
+err_close_fd:
+    close(dev->fd);
+err_free_mem:
+    free(dev->mem);
+    return -1;
+}
+```
+
+Benefits:
+
+- Eliminates duplicate deallocation logic across early error returns.
+- Guarantees zero resource leaks when errors occur midway through setup.
+- Enforces strict linear unwinding matching the exact reverse order of acquisition.

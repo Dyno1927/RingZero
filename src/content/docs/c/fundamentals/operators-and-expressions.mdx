@@ -1,0 +1,128 @@
+---
+title: Operators & Expressions in C
+description: Arithmetic behavior, bitwise hardware operations, short-circuiting, and unsequenced modifications in C.
+---
+
+Operators in C instruct the compiler to generate specific ALU instructions, memory accesses, or control-flow branches. Because C is close to the machine, operators mirror CPU assembly instructions directly.
+
+## Arithmetic Operators
+
+C supports basic binary arithmetic: `+` (addition), `-` (subtraction), `*` (multiplication), `/` (division), and `%` (modulo/remainder).
+
+### Integer Division & Truncation
+
+In C (since C99), integer division **truncates toward zero** (also known as algebraic truncation):
+
+```c
+int a = 7 / 2;   // 3
+int b = -7 / 2;  // -3 (NOT -4)
+```
+
+The remainder operator `%` is defined by the invariant `(a / b) * b + (a % b) == a`. Consequently, the sign of the remainder matches the sign of the dividend:
+
+```c
+int r1 = 7 % 3;   // 1
+int r2 = -7 % 3;  // -1
+```
+
+:::caution[Division by Zero is Undefined Behavior]
+Dividing an integer by zero (`x / 0`) or taking its modulo (`x % 0`) is **Undefined Behavior**. On x86-64, the CPU generates an interrupt vector 0 (`#DE` Divide Error), causing the operating system to send a `SIGFPE` signal that immediately terminates the process unless caught.
+:::
+
+## Bitwise Operators: The Systems Toolkit
+
+Bitwise operators manipulate individual bits directly inside CPU registers with single-cycle instruction execution:
+
+| Operator | Name        | Bit Operation                                    |
+| :------- | :---------- | :----------------------------------------------- |
+| `&`      | Bitwise AND | 1 if both bits are 1; otherwise 0                |
+| `\|`     | Bitwise OR  | 1 if at least one bit is 1; otherwise 0          |
+| `^`      | Bitwise XOR | 1 if bits differ; 0 if bits match                |
+| `~`      | Bitwise NOT | Flips all bits (one's complement)                |
+| `<<`     | Shift Left  | Shifts bits left by $N$ positions; fills with 0s |
+| `>>`     | Shift Right | Shifts bits right by $N$ positions               |
+
+### Essential Bit Manipulation Idioms
+
+```c
+#include <stdint.h>
+
+uint32_t flags = 0;
+
+// 1. Set bit N (turn on)
+flags |= (1U << 3);      // Sets bit 3 (value 8)
+
+// 2. Clear bit N (turn off)
+flags &= ~(1U << 3);     // Clears bit 3
+
+// 3. Toggle bit N
+flags ^= (1U << 3);      // Inverts bit 3
+
+// 4. Test if bit N is set
+int is_set = (flags & (1U << 3)) != 0;
+
+// 5. Check if power of 2
+int is_power_of_two = (x != 0) && ((x & (x - 1)) == 0);
+```
+
+### Shift Caveats: Logical vs. Arithmetic Shifts
+
+- **Left Shift (`<<`)**: Shifting an unsigned integer left by $N$ is equivalent to multiplying by $2^N$. Shifting a signed integer such that the sign bit changes or overflows is **Undefined Behavior**.
+- **Right Shift (`>>`)**:
+  - **Unsigned Types**: Performs a **logical right shift** (inserts 0s into the most significant bits).
+  - **Signed Types**: Implementation-defined, but nearly all modern hardware performs an **arithmetic right shift** (replicates the sign bit to preserve negative numbers).
+- **Shift Range**: Shifting by an amount $\ge$ the bit-width of the type (e.g., `uint32_t x = 1U << 32;`) or by a negative count is **Undefined Behavior**.
+
+## Logical Operators & Short-Circuit Evaluation
+
+Logical operators (`&&` for AND, `||` for OR, `!` for NOT) evaluate truthiness: in C, integer `0` is false, and any non-zero integer is true.
+
+Logical expressions use **short-circuit evaluation**:
+
+- For `A && B`, if `A` evaluates to false (`0`), `B` is **never executed**.
+- For `A || B`, if `A` evaluates to true (non-zero), `B` is **never executed**.
+
+Systems code relies on this guarantee to prevent invalid pointer dereferences:
+
+```c
+// Safe: If 'node' is NULL, node->value is never evaluated
+if (node != NULL && node->value == target) {
+    // Process target
+}
+```
+
+## Operator Precedence Hazards
+
+A notorious bug in C involves the interaction between equality (`==`), relational (`<`, `>`), and bitwise operators (`&`, `|`):
+
+```c
+// BUG: '==' has higher precedence than '&'!
+// This evaluates as: if (flags & (1 == 0)) -> if (flags & 0) -> ALWAYS FALSE!
+if (flags & 1 == 0) { /* ... */ }
+
+// CORRECT: Parenthesize explicitly
+if ((flags & 1) == 0) { /* ... */ }
+```
+
+Another classic precedence trap involves pointer indirection and postfix increment:
+
+```c
+int *p = array;
+int val1 = *p++;   // Evaluates as *(p++): reads current *p, then advances pointer
+int val2 = (*p)++; // Increments the integer value pointed to by p!
+```
+
+## Unsequenced Modifications (C17 §6.5/2)
+
+Between sequence points, modifying a scalar object more than once — or modifying an object and reading its value for an unrelated computation — is **Undefined Behavior**:
+
+```c
+int i = 5;
+
+// UNDEFINED BEHAVIOR:
+i = i++;
+a[i] = i++;
+f(i++, i++);
+```
+
+Compilers will emit `-Wunsequenced` warnings. Never combine increments/decrements with other reads of the same variable in a single expression.

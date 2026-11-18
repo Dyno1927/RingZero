@@ -68,3 +68,18 @@ code {
   gap: 8px;
   margin-bottom: 1.25rem;
 }
+
+/* Ensure homepage CardGrid aligns uniformly on the same horizontal plane */
+.card-grid {
+  display: grid !important;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, 15rem), 1fr)
+  ) !important;
+  gap: 1.25rem !important;
+}
+
+.card-grid > * {
+  margin-top: 0 !important;
+  transform: none !important;
+}

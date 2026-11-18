@@ -1,0 +1,110 @@
+---
+title: Moving from C to C++
+description: Namespaces, references, function overloading, name mangling, and type-safe nullptr in C++.
+---
+
+C++ began as "C with Classes" and maintains broad backwards compatibility with C, but modern C++ (C++17, C++20) represents a distinct systems language. It retains C's hardware efficiency and zero-cost abstraction philosophy ("what you don't use, you don't pay for") while adding type-safety features that eliminate whole categories of C bugs.
+
+## Namespaces & Symbol Scope
+
+C relies on manual prefixing (e.g., `curl_easy_init`, `git_commit_create`) to avoid global symbol collisions. C++ provides native **namespaces**:
+
+```cpp
+namespace Net {
+    struct Socket {
+        int fd;
+    };
+
+    void connect(Socket &s, const char *ip);
+}
+
+// Invocation
+Net::Socket sock{3};
+Net::connect(sock, "127.0.0.1");
+```
+
+## References vs. Pointers
+
+A **reference** (`T &`) is an alias for an existing object. At the assembly level, compilers implement references as pointers under the hood, but with strict language-level invariants:
+
+```cpp
+int original = 100;
+int &ref = original; // 'ref' is an alias for 'original'
+
+ref = 200; // 'original' is now 200
+```
+
+| Property        | Pointers (`T *`)                                  | References (`T &`)                                                    |
+| :-------------- | :------------------------------------------------ | :-------------------------------------------------------------------- |
+| **Nullability** | Can be `nullptr` (must validate before use)       | Cannot be null (assumed to bind to a valid object)                    |
+| **Re-binding**  | Can be reassigned to point to a different address | Cannot be re-bound; once initialized, assignments mutate the referent |
+| **Syntax**      | Requires explicit indirection (`*p`, `->`)        | Uses clean direct member access (`.`)                                 |
+
+### Pass-by-Reference & `const &`
+
+To avoid copying large structures while preventing accidental mutations, pass by `const` reference:
+
+```cpp
+struct Matrix4x4 {
+    float data[16];
+};
+
+// Zero copy overhead + compile-time immutability enforcement
+void render(const Matrix4x4 &mat);
+```
+
+## Function Overloading & Name Mangling
+
+C++ allows multiple functions to share the exact same name as long as their parameter signatures differ:
+
+```cpp
+void logMessage(int code);
+void logMessage(const char *msg);
+void logMessage(double duration);
+```
+
+### Why `extern "C"` is Mandatory
+
+To distinguish overloaded functions, the C++ compiler modifies symbol names in the object file (`.o`) by encoding parameter types into the symbol name — a process called **Name Mangling**:
+
+- `logMessage(int)` becomes `_Z10logMessagei`
+- `logMessage(const char*)` becomes `_Z10logMessagePKc`
+
+Because standard C compilers do not mangle symbol names, attempting to link a C function from C++ causes linker errors (`undefined reference`) unless wrapped in `extern "C"`:
+
+```cpp
+// Informs C++ compiler to use un-mangled C linkage convention
+extern "C" {
+    #include "legacy_c_header.h"
+    void c_function(int x);
+}
+```
+
+## Type-Safe `nullptr` vs. `NULL`
+
+In C, `NULL` is defined as `((void*)0)` or bare `0`. In C++, implicit conversions from `void*` to other pointer types are disallowed. Consequently, C++ historically defined `NULL` as the integer literal `0`, creating ambiguity in overloaded functions:
+
+```cpp
+void handle(int x);
+void handle(char *ptr);
+
+handle(NULL); // AMBIGUOUS: Calls handle(int) because NULL is integer 0!
+```
+
+C++11 introduced `nullptr`, a literal of type `std::nullptr_t`. It can convert to any pointer type, but **never to an integral type**:
+
+```cpp
+handle(nullptr); // Unambiguously calls handle(char *ptr)
+```
+
+## Type Deduction: `auto`
+
+The `auto` keyword instructs the compiler to deduce a variable's type at compile time from its initializer:
+
+```cpp
+auto x = 42;             // int
+auto pi = 3.14159;       // double
+const auto *ptr = &x;    // const int *
+```
+
+`auto` incurs zero runtime overhead — type deduction occurs entirely during compilation.

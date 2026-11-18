@@ -21,6 +21,22 @@ export default defineConfig({
               label: "Fundamentals",
               collapsed: false,
               items: [
+                {
+                  label: "Variables & Types",
+                  slug: "c/fundamentals/variables-and-types",
+                },
+                {
+                  label: "Operators & Expressions",
+                  slug: "c/fundamentals/operators-and-expressions",
+                },
+                {
+                  label: "Control Flow & Loops",
+                  slug: "c/fundamentals/control-flow",
+                },
+                {
+                  label: "Functions & Linkage",
+                  slug: "c/fundamentals/functions",
+                },
                 { label: "Pointers", slug: "c/fundamentals/pointers" },
                 { label: "Arrays", slug: "c/fundamentals/arrays" },
                 { label: "Structures", slug: "c/fundamentals/structures" },
@@ -46,7 +62,14 @@ export default defineConfig({
               label: "Fundamentals",
               collapsed: false,
               items: [
-                { label: "Classes", slug: "cpp/fundamentals/classes" },
+                {
+                  label: "Moving from C to C++",
+                  slug: "cpp/fundamentals/c-to-cpp",
+                },
+                {
+                  label: "Classes & Objects",
+                  slug: "cpp/fundamentals/classes",
+                },
                 { label: "RAII & Lifetimes", slug: "cpp/fundamentals/raii" },
               ],
             },

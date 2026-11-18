@@ -1,0 +1,101 @@
+---
+title: Variables & Types in C
+description: Memory representation, two's complement, fixed-width integers, and variable lifetimes in C.
+---
+
+In C, a **variable** is a human-readable identifier bound to a specific region of memory in the process's virtual address space. Unlike dynamically typed languages, C variables have fixed types determined at compile time, dictate the exact number of bytes allocated, and govern how raw bits in hardware registers are interpreted.
+
+## Primitive Types and Bit-Widths
+
+The C standard guarantees minimum bit-widths for primitive types, but their exact size is platform- and ABI-dependent:
+
+| Type        | Minimum Standard Width | Typical Size (x86-64 / ARM64)     | Value Range                           |
+| :---------- | :--------------------- | :-------------------------------- | :------------------------------------ |
+| `char`      | 8 bits                 | 1 byte                            | -128 to 127 (or 0 to 255 if unsigned) |
+| `short`     | 16 bits                | 2 bytes                           | -32,768 to 32,767                     |
+| `int`       | 16 bits                | 4 bytes                           | -2,147,483,648 to 2,147,483,647       |
+| `long`      | 32 bits                | 8 bytes (Linux) / 4 bytes (Win64) | ABI-dependent                         |
+| `long long` | 64 bits                | 8 bytes                           | $-2^{63}$ to $2^{63}-1$               |
+| `float`     | 32 bits                | 4 bytes                           | IEEE 754 single-precision             |
+| `double`    | 64 bits                | 8 bytes                           | IEEE 754 double-precision             |
+
+:::caution[The `char` Signedness Pitfall]
+The C standard does not specify whether plain `char` is signed or unsigned. On x86-64, compilers typically treat `char` as signed (`signed char`), whereas on ARM and PowerPC, compilers often default `char` to `unsigned char`. Never rely on plain `char` to hold negative values — specify `signed char` or `int8_t` explicitly.
+:::
+
+## Two's Complement & Modulo Arithmetic
+
+Modern systems represent signed integers using **two's complement**:
+
+- The most significant bit (MSB) acts as the sign bit (1 for negative, 0 for positive).
+- To negate a number in two's complement: invert all bits (`~x`) and add 1 (`~x + 1`).
+
+### Signed Overflow vs. Unsigned Wrap-Around
+
+- **Unsigned Arithmetic**: Guaranteed by the ISO C standard to obey rules of modulo arithmetic ($2^N$). Overflowing an unsigned integer simply wraps around to zero. This is well-defined behavior.
+- **Signed Arithmetic**: Overflowing a signed integer (e.g., `INT_MAX + 1`) is **Undefined Behavior**. Compilers will optimize away bounds checks under the assumption that signed overflow is physically impossible.
+
+```c
+#include <limits.h>
+
+// Well-defined: wraps to 0
+unsigned int u = UINT_MAX;
+u = u + 1; // u is now 0
+
+// UNDEFINED BEHAVIOR:
+int s = INT_MAX;
+s = s + 1; // Compiler optimization hazard!
+```
+
+## Fixed-Width Integers (`<stdint.h>`)
+
+Because `long` is 8 bytes on Linux (LP64 data model) but only 4 bytes on 64-bit Windows (LLP64 data model), production systems programming strictly favors explicit fixed-width integer types from `<stdint.h>`:
+
+```c
+#include <stdint.h>
+
+int8_t   byte_val   = -128;         // Exactly 1 byte, signed
+uint8_t  raw_byte   = 0xFF;         // Exactly 1 byte, unsigned (0-255)
+int16_t  port       = 8080;         // Exactly 2 bytes
+uint32_t ipv4_addr  = 0xC0A80001;   // Exactly 4 bytes (192.168.0.1)
+uint64_t timestamp  = 1710000000ULL;// Exactly 8 bytes
+```
+
+### Pointer and Size Types
+
+- `size_t`: Unsigned integer type returned by `sizeof`. Large enough to hold the byte size of the largest possible object in memory.
+- `ptrdiff_t`: Signed integer type returned when subtracting two pointers pointing into the same array.
+- `uintptr_t` / `intptr_t`: Integer types guaranteed to be wide enough to hold a void pointer without truncation, essential for pointer arithmetic and bit-tagging.
+
+## Variable Scopes and Storage Duration
+
+A variable's **storage duration** dictates when its physical memory is allocated and released:
+
+1. **Automatic Storage Duration** (Local variables): Allocated on the CPU call stack when entering a block (`{ ... }`) and deallocated when exiting. Not zero-initialized by default — reads without writes return uninitialized stack garbage.
+2. **Static Storage Duration** (Global and `static` variables): Allocated in the data segment (`.data` if initialized, `.bss` if zeroed) for the entire lifetime of the process. Automatically zero-initialized by the OS kernel.
+3. **Allocated Storage Duration** (Heap): Explicitly requested at runtime via `malloc` and released via `free`.
+
+```c
+#include <stdio.h>
+
+int global_counter = 0; // Static storage (.data)
+
+void execute(void) {
+    int local_stack_var; // Automatic storage (stack): Indeterminate garbage value!
+    static int call_count = 0; // Static storage: Preserves value between function calls
+
+    call_count++;
+    printf("Function called %d times\n", call_count);
+}
+```
+
+## Immutability with `const`
+
+The `const` keyword indicates that a variable's value cannot be mutated through that identifier:
+
+```c
+const int MAX_USERS = 1000;
+// MAX_USERS = 2000; // COMPILER ERROR
+```
+
+Global variables marked `const` are placed by the linker into the `.rodata` (read-only data) section of the binary. Attempting to cast away `const` and mutate this memory triggers a hardware memory protection fault (`SIGSEGV`).
