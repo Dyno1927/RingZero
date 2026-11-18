@@ -1,0 +1,120 @@
+---
+title: Pointers in C
+description: Memory addresses, dereferencing semantics, pointer arithmetic, and undefined behavior boundaries in C.
+---
+
+A pointer in C is an object whose value is the virtual memory address of another entity (an object, a function, or incomplete type). Declaring a pointer reserves storage solely for the address itself (typically 8 bytes on 64-bit architectures, 4 bytes on 32-bit architectures) — it allocates zero storage for the pointee.
+
+## Memory Model & Declaration
+
+When a variable is declared, the compiler and operating system allocate a region in the process's virtual address space:
+
+```c
+int x = 42;
+int *p = &x;
+```
+
+In memory, this establishes two distinct allocations:
+
+```text
+Address         Variable    Value
+0x7ffd9a20      x           0x0000002a (42)
+0x7ffd9a28      p           0x7ffd9a20 (Address of x)
+```
+
+The unary `&` (address-of) operator yields a pointer to its operand. The unary `*` (indirection or dereference) operator accesses the object located at the stored address.
+
+```c
+*p = 99; // Modifies the value stored at 0x7ffd9a20; x is now 99
+```
+
+:::caution[Undefined Behavior: Uninitialized Pointers]
+A local pointer declared without an initializer holds an indeterminate value (a "wild pointer"):
+
+```c
+int *ptr; // Indeterminate address
+*ptr = 10; // UNDEFINED BEHAVIOR
+```
+
+Dereferencing an uninitialized or wild pointer does not guarantee an immediate crash or segmentation fault. It may silently corrupt other stack variables, overwrite registers, or produce erratic execution paths depending on optimization levels (`-O2`, `-O3`).
+:::
+
+## Pointer Arithmetic
+
+Pointer arithmetic in C is scaled by the size of the referenced type (`sizeof(*p)`), never by raw byte offsets:
+
+```c
+int values[4] = {10, 20, 30, 40};
+int *p = values; // Points to values[0] at offset 0
+
+p = p + 1; // Advances by 1 * sizeof(int) (typically 4 bytes), pointing to values[1]
+```
+
+Given a pointer `T *p` and an integer offset `i`:
+
+- `p + i` computes the memory address: `(uintptr_t)p + i * sizeof(T)`.
+- The subtraction `p2 - p1` between two pointers of type `T*` pointing into (or one past the end of) the same array yields a signed integer of type `ptrdiff_t` representing the element count, not byte distance.
+
+:::caution[Bounds and Arithmetic Limits (C17 §6.5.6)]
+Pointer arithmetic is only well-defined when operating within the boundaries of an array object or exactly one element past its end. Performing pointer arithmetic beyond one past the end — even without dereferencing — is undefined behavior.
+:::
+
+## `void*` and Type Erasure
+
+A pointer to `void` (`void *`) represents a generic memory address lacking type and size information.
+
+- Any object pointer can be implicitly converted to `void *` and back without an explicit cast in C (unlike C++).
+- Pointer arithmetic cannot be performed directly on a `void *` in standard C, because `sizeof(void)` is an incomplete type (though GCC and Clang support `void*` arithmetic as an extension where `sizeof(void) == 1`).
+
+```c
+void swap(void *a, void *b, size_t size) {
+    unsigned char *p1 = (unsigned char *)a;
+    unsigned char *p2 = (unsigned char *)b;
+    while (size--) {
+        unsigned char tmp = *p1;
+        *p1++ = *p2;
+        *p2++ = tmp;
+    }
+}
+```
+
+## `const` Semantics with Pointers
+
+The position of the `const` qualifier relative to the asterisk dictates what is immutable:
+
+```c
+int val = 100;
+int other = 200;
+
+// 1. Pointer to constant integer: pointee cannot be modified through this pointer
+const int *p1 = &val;
+// *p1 = 10;      // Compiler error
+p1 = &other;      // Valid: pointer itself can be redirected
+
+// 2. Constant pointer to integer: pointer address cannot change
+int * const p2 = &val;
+*p2 = 10;         // Valid: modifies pointee
+// p2 = &other;   // Compiler error
+
+// 3. Constant pointer to constant integer: neither can change
+const int * const p3 = &val;
+// *p3 = 10;      // Compiler error
+// p3 = &other;   // Compiler error
+```
+
+## Strict Aliasing Rule (C17 §6.5/7)
+
+The C standard dictates that two pointers of different types (with few exceptions, notably `char *` and signed/unsigned variants) cannot point to the same memory location. The compiler assumes accesses through incompatible pointer types do not alias, enabling register caching and reordering:
+
+```c
+uint32_t x = 0x12345678;
+// Violates strict aliasing:
+uint16_t *p = (uint16_t *)&x; // Undefined Behavior under standard aliasing rules
+```
+
+To inspect raw representation bytes safely without violating aliasing rules, copy via `memcpy` or cast through `char *` / `unsigned char *`:
+
+```c
+unsigned char bytes[sizeof(uint32_t)];
+memcpy(bytes, &x, sizeof(x)); // Valid, defined behavior
+```

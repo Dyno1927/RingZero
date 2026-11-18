@@ -1,0 +1,155 @@
+---
+title: RAII and Lifetime Management in C++
+description: Resource Acquisition Is Initialization, deterministic destruction, and exception safety guarantees in C++.
+---
+
+**RAII** (Resource Acquisition Is Initialization) is the core idiomatic pattern in modern C++ for managing system resources: heap memory, file descriptors, network sockets, mutex locks, and database handles.
+
+The guiding principle of RAII is:
+
+1. **Acquire the resource** inside the object's constructor (`init`, `open`, `malloc`, `lock`).
+2. **Bind resource lifetime** to the object's scoped lifetime on the stack or within an enclosing owner.
+3. **Release the resource** automatically inside the object's destructor (`delete`, `close`, `free`, `unlock`).
+
+Because C++ guarantees that stack-allocated objects are destroyed deterministically in reverse order of declaration when their enclosing scope exits — whether via normal return, `break`, `continue`, or an unhandled exception (stack unwinding) — RAII prevents resource leaks entirely.
+
+## The Flaw of Manual Resource Cleanup
+
+In C or manual-cleanup models, every control-flow branch requires explicit release calls:
+
+```cpp
+// ANTI-PATTERN: Prone to leaks on early return or exception
+void processFileManual(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return;
+
+    char *buf = new char[4096];
+
+    if (!validateHeader(fd)) {
+        // BUG: Forgot delete[] buf and close(fd) before early return!
+        return;
+    }
+
+    delete[] buf;
+    close(fd);
+}
+```
+
+## The RAII Solution: Scoped Encapsulation
+
+By wrapping resource handles in lightweight RAII structs, cleanup is guaranteed by the compiler:
+
+```cpp
+#include <unistd.h>
+#include <fcntl.h>
+#include <utility>
+#include <stdexcept>
+
+class FileDescriptor {
+private:
+    int fd;
+
+public:
+    explicit FileDescriptor(int fd_ = -1) noexcept : fd(fd_) {}
+
+    ~FileDescriptor() noexcept {
+        if (fd >= 0) {
+            close(fd);
+        }
+    }
+
+    // Non-copyable (Unique ownership)
+    FileDescriptor(const FileDescriptor &) = delete;
+    FileDescriptor &operator=(const FileDescriptor &) = delete;
+
+    // Move-constructible
+    FileDescriptor(FileDescriptor &&other) noexcept : fd(other.fd) {
+        other.fd = -1;
+    }
+
+    // Move-assignable
+    FileDescriptor &operator=(FileDescriptor &&other) noexcept {
+        if (this != &other) {
+            if (fd >= 0) close(fd);
+            fd = other.fd;
+            other.fd = -1;
+        }
+        return *this;
+    }
+
+    int get() const noexcept { return fd; }
+    bool isValid() const noexcept { return fd >= 0; }
+};
+```
+
+With `FileDescriptor` in place:
+
+```cpp
+void processFile(const char *path) {
+    FileDescriptor file(open(path, O_RDONLY));
+    if (!file.isValid()) return;
+
+    // Even if an exception is thrown or an early return occurs,
+    // the FileDescriptor destructor runs unconditionally.
+}
+```
+
+## Standard Library RAII Primitives
+
+Modern C++ provides production-tested RAII wrappers for common system tasks:
+
+### 1. `std::unique_ptr` with Custom Deleters
+
+`std::unique_ptr` manages single-owner heap resources with zero runtime overhead over a raw pointer:
+
+```cpp
+#include <memory>
+#include <cstdio>
+
+struct FileCloser {
+    void operator()(FILE *fp) const noexcept {
+        if (fp) fclose(fp);
+    }
+};
+
+using UniqueFile = std::unique_ptr<FILE, FileCloser>;
+
+void writeLog(const char *msg) {
+    UniqueFile file(fopen("/tmp/audit.log", "a"));
+    if (file) {
+        fputs(msg, file.get());
+    } // fclose automatically invoked here
+}
+```
+
+### 2. `std::lock_guard` and `std::scoped_lock`
+
+Mutex locking must strictly follow RAII to avoid deadlocks:
+
+```cpp
+#include <mutex>
+
+std::mutex stateMutex;
+int sharedCounter = 0;
+
+void incrementCounter() {
+    // Locks stateMutex upon construction; unlocks upon scope exit
+    std::lock_guard<std::mutex> lock(stateMutex);
+    sharedCounter++;
+}
+```
+
+## Exception Safety Levels
+
+RAII is the bedrock of C++ exception safety guarantees:
+
+| Guarantee                 | Invariant Behavior                                                                                               |
+| :------------------------ | :--------------------------------------------------------------------------------------------------------------- |
+| **No-throw (`noexcept`)** | Operations are guaranteed to succeed without throwing. Essential for destructors, move operations, and swap.     |
+| **Strong Guarantee**      | Commit-or-rollback semantics. If an operation throws, program state remains exactly as it was before invocation. |
+| **Basic Guarantee**       | No memory or resource leaks. Invariants are preserved, though state may differ from pre-call state.              |
+| **No Guarantee**          | Leaks or corrupted state occur if an exception is raised. Unacceptable in systems code.                          |
+
+:::caution[Destructors Must Never Throw (`noexcept`)]
+In C++11 and later, all destructors are implicitly `noexcept`. If a destructor throws during stack unwinding (when an exception is already in flight), `std::terminate` is immediately called, crashing the process without clean shutdown. Always swallow or log errors within destructors.
+:::

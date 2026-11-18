@@ -1,0 +1,58 @@
+---
+title: Planned Architecture & Roadmap
+description: Transparent overview of planned sections and expansion milestones for [name].
+---
+
+import { Badge } from "@astrojs/starlight/components";
+
+This site prioritizes **technical accuracy, depth, and complete reference implementations over page count**. Rather than presenting shallow placeholders or incomplete summaries as finished articles, upcoming areas in the Information Architecture (IA) are clearly labeled as <Badge text="Planned" variant="caution" /> until they meet our editorial and verification bar.
+
+## Information Architecture (IA) Status
+
+### C Language Track
+
+- <Badge text="Shipped" variant="success" /> **Fundamentals**: Pointers, Arrays,
+  Structures
+- <Badge text="Planned" variant="caution" /> **Memory**: Malloc family internals
+  (`ptmalloc`, `tcmalloc`, arena boundaries), Dangling pointers & Use-After-Free
+- <Badge text="Planned" variant="caution" /> **Advanced Systems C**:
+  Variable-Length Arrays vs Dynamic Stack Allocation (`alloca`), Inline Assembly
+  (`asm`), Bitfields and Endianness
+
+### C++ Language Track
+
+- <Badge text="Shipped" variant="success" /> **Fundamentals**: Classes, RAII and
+  Scoped Ownership
+- <Badge text="Planned" variant="caution" /> **Concurrency**: `std::thread`,
+  `std::jthread`, `std::atomic` memory models (acquire-release semantics)
+- <Badge text="Planned" variant="caution" /> **Templates & Metaprogramming**:
+  SFINAE, Concepts (C++20), Constexpr systems programming
+
+### Libraries & SDKs
+
+- <Badge text="Shipped" variant="success" /> **Network Transfer**: `libcurl`
+  (Easy & Multi interfaces)
+- <Badge text="Planned" variant="caution" /> **Compression & Crypto**: `zlib`,
+  `OpenSSL` / `BoringSSL` BIO interfaces
+- <Badge text="Planned" variant="caution" /> **Graphics & Compute**: Vulkan
+  pipeline architecture, CUDA runtime memory models
+
+### Operating System Interfaces
+
+- <Badge text="Shipped" variant="success" /> **POSIX I/O**: File descriptors,
+  table architecture, partial transfers, and `EINTR`
+- <Badge text="Planned" variant="caution" /> **Linux Kernel Interfaces**:
+  `epoll`, `io_uring`, Memory Mapping (`mmap`), Signal handling
+- <Badge text="Planned" variant="caution" /> **Windows Systems Programming**:
+  Win32 Handles, Overlapped I/O, I/O Completion Ports (IOCP)
+
+### Project Milestones
+
+- <Badge text="Shipped" variant="success" /> **Beginner**: Command-Line Task
+  Manager (`taskcli`)
+- <Badge text="Shipped" variant="success" /> **Intermediate**: Bounded Thread
+  Pool (`pthreads`)
+- <Badge text="Planned" variant="caution" /> **Advanced**: Intrusive Fast Hash
+  Table, Non-blocking HTTP/1.1 Event Loop
+- <Badge text="Planned" variant="caution" /> **Expert**: Custom Arena Memory
+  Allocator, JIT Bytecode Interpreter

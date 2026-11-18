@@ -1,0 +1,122 @@
+---
+title: Arrays in C
+description: Memory layout, array-pointer decay, multidimensional strides, and boundary safety in C.
+---
+
+An array in C is a fixed-size, contiguous sequence of objects of uniform type allocated in a single block of memory. The language provides no built-in bounds checking, bounds tracking metadata, or runtime safety wrappers.
+
+## Contiguous Memory Layout
+
+When an array `int arr[4] = {10, 20, 30, 40};` is declared on the stack, the compiler allocates `4 * sizeof(int)` contiguous bytes:
+
+```text
+Element:    arr[0]      arr[1]      arr[2]      arr[3]
+Address:    0x1000      0x1004      0x1008      0x100C
+Bytes:      [ 4 bytes ] [ 4 bytes ] [ 4 bytes ] [ 4 bytes ]
+Value:      10          20          30          40
+```
+
+Because elements are contiguous with zero internal padding between entries, computing `&arr[i]` is identical to `(uintptr_t)arr + (i * sizeof(int))`.
+
+## Array-to-Pointer Decay
+
+In almost all C expressions, an array identifier automatically converts (decays) into a pointer to its first element (`&arr[0]`), retaining the type `T*`.
+
+There are exactly three exceptions where array decay **does not** occur:
+
+1. When passed as the operand of `sizeof` (e.g., `sizeof(arr)` yields total byte count, not pointer size).
+2. When passed as the operand of the unary address-of operator `&` (e.g., `&arr` yields a pointer to the entire array of type `int (*)[4]`, not `int **`).
+3. When initialized with a string literal (e.g., `char s[] = "hello"` initializes the array storage directly).
+
+```c
+int arr[5] = {1, 2, 3, 4, 5};
+
+// 1. Array decay in assignment
+int *p = arr; // Implicitly decays to &arr[0]
+
+// 2. Sizeof behavior
+size_t total_bytes = sizeof(arr); // 5 * 4 = 20 bytes
+size_t ptr_bytes   = sizeof(p);   // 8 bytes on 64-bit
+
+// 3. Address-of behavior
+int (*parr)[5] = &arr; // Pointer to array of 5 ints
+```
+
+## Subscript Equivalence: `arr[i]` vs `*(arr + i)`
+
+The array subscript syntax `E1[E2]` is defined by the C standard (C17 §6.5.2.1) to be strictly identical to `*((E1) + (E2))`:
+
+```c
+int arr[3] = {100, 200, 300};
+
+int a = arr[1];       // Evaluates as *(arr + 1) -> 200
+int b = *(arr + 1);   // Explicit pointer arithmetic -> 200
+int c = 1[arr];       // Valid C syntax: *((1) + (arr)) -> 200
+```
+
+## Multidimensional Arrays and Row-Major Strides
+
+Multidimensional arrays in C are stored in **row-major order** — the last index changes most rapidly in memory:
+
+```c
+int matrix[2][3] = {
+    {1, 2, 3},
+    {4, 5, 6}
+};
+```
+
+In memory, this is a linear flat buffer of 6 integers:
+
+```text
+Offset:   0    4    8    12   16   20
+Value:    1    2    3    4    5    6
+Index:  [0][0] [0][1] [0][2] [1][0] [1][1] [1][2]
+```
+
+### Decay in Multidimensional Contexts
+
+When `matrix` decays, it decays into a pointer to its first element — which is an array of 3 integers:
+
+```c
+int (*row_ptr)[3] = matrix; // Correct type: pointer to int[3]
+// int **invalid = matrix;  // COMPILER ERROR: int** is not an array pointer
+```
+
+To compute the address of `matrix[r][c]`, the compiler computes:
+
+```text
+Address = Base + (r * COLS + c) * sizeof(Element)
+```
+
+## Variable-Length Arrays (VLAs)
+
+Introduced in C99, VLAs allow array dimensions to be determined at runtime:
+
+```c
+void process(size_t n) {
+    int buffer[n]; // Size evaluated at runtime on the stack
+}
+```
+
+:::caution[VLA Security and Portability Risks]
+
+1. **Stack Exhaustion**: Large values of `n` cause unrecoverable stack overflows (SIGSEGV) without any allocation failure notification.
+2. **Standard Optionality**: Since C11, VLAs are optional; implementations define `__STDC_NO_VLA__` if unsupported.
+3. In modern systems programming, dynamically sized buffers must be allocated on the heap via `malloc` or managed within static capacity limits.
+   :::
+
+## Strings as Null-Terminated Arrays
+
+A string in C is not a primitive type; it is a contiguous array of `char` terminated by a null byte (`'\0'`, ASCII 0):
+
+```c
+char stack_str[] = "System"; // Allocates 7 bytes on the stack: 'S','y','s','t','e','m','\0'
+const char *rodata_str = "System"; // Points to read-only string literal in .rodata
+```
+
+Attempting to mutate string literals stored in `.rodata` via a non-const pointer is undefined behavior (and typically results in a bus error or segmentation fault):
+
+```c
+char *s = "immutable";
+s[0] = 'I'; // UNDEFINED BEHAVIOR: write to read-only page
+```

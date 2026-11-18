@@ -1,8 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
 
 :root {
-  --sl-font: 'IBM Plex Sans', system-ui, sans-serif;
-  --sl-font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
+  --sl-font: "IBM Plex Sans", system-ui, sans-serif;
+  --sl-font-mono: "IBM Plex Mono", "SF Mono", monospace;
 
   /* Light Theme (Paper / Teal) */
   --sl-color-accent-low: #e3f0ea;
@@ -16,9 +16,14 @@
   --sl-color-gray-5: #e1ddd3;
   --sl-color-gray-6: #f0ede6;
   --sl-color-black: #f6f4ef;
+
+  /* Custom Callout / Warning Tokens */
+  --sys-warn-bg: #fbf0dd;
+  --sys-warn-text: #8a5a12;
+  --sys-warn-border: #d4a34b;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   /* Dark Theme (Graphite / Teal) */
   --sl-color-accent-low: #122621;
   --sl-color-accent: #4fa98a;
@@ -31,4 +36,35 @@
   --sl-color-gray-5: #2c3034;
   --sl-color-gray-6: #1e2124;
   --sl-color-black: #16181b;
+
+  /* Custom Callout / Warning Tokens */
+  --sys-warn-bg: #2a2015;
+  --sys-warn-text: #e3b571;
+  --sys-warn-border: #a67931;
+}
+
+/* Starlight Aside / Callout overrides matching mockup */
+.starlight-aside--caution,
+.starlight-aside--danger {
+  background-color: var(--sys-warn-bg) !important;
+  color: var(--sys-warn-text) !important;
+  border-left-color: var(--sys-warn-border) !important;
+}
+
+.starlight-aside--caution .starlight-aside__title,
+.starlight-aside--danger .starlight-aside__title {
+  color: var(--sys-warn-text) !important;
+}
+
+/* Code block typography and spacing */
+pre,
+code {
+  font-family: var(--sl-font-mono) !important;
+}
+
+/* Metadata pill badges */
+.proj-tags {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 1.25rem;
 }

@@ -1,0 +1,277 @@
+---
+title: Thread Pool in C
+description: Build a production-grade POSIX thread pool with a synchronized bounded task queue.
+---
+
+import { Badge } from "@astrojs/starlight/components";
+import ReferenceSolution from "../../../components/ReferenceSolution.astro";
+
+<div class="proj-tags">
+  <Badge text="Intermediate" variant="caution" />
+  <Badge text="C" variant="note" />
+</div>
+
+## 1. Overview & Objective
+
+Implement a high-performance, bounded-queue **Thread Pool** in pure C using the POSIX Threads (`pthreads`) standard. Thread pools eliminate the significant latency penalty of spawning and destroying OS threads on each request, reusing a fixed set of pre-warmed worker threads pulling jobs from a synchronized task queue.
+
+## 2. Prerequisites & Concepts
+
+- **Concurrency Primitives**: `pthread_t`, `pthread_mutex_t`, `pthread_cond_t`.
+- **Condition Variables**: Understanding wait/signal mechanics, condition predicates, and why spurious wakeups require re-evaluating loop conditions (`while` instead of `if`).
+- **Producer-Consumer Pattern**: Bounded circular buffer with backpressure.
+
+## 3. System Architecture
+
+```text
+  Producer Threads                     Task Queue                     Worker Threads
+┌──────────────────┐           ┌────────────────────────┐           ┌────────────────┐
+│ submit(fn, arg)  │ ──lock──→ │ [Task 1][Task 2][Task 3]│ ──lock──→ │ Worker 0       │
+└──────────────────┘           └────────────────────────┘           ├────────────────┤
+┌──────────────────┐                     ▲                          │ Worker 1       │
+│ submit(fn, arg)  │ ────────────────────┘                          ├────────────────┤
+└──────────────────┘                                                │ Worker 2       │
+                                                                    ├────────────────┤
+                                                                    │ Worker 3       │
+                                                                    └────────────────┘
+```
+
+## 4. Scope & Requirements
+
+### Functional Requirements
+
+- `thread_pool_create(size_t num_threads, size_t queue_capacity)`: Allocates resources, spawns worker threads, and initializes synchronization primitives.
+- `thread_pool_submit(pool, fn, arg)`: Enqueues a task. Blocks if the queue is full until space becomes available.
+- `thread_pool_destroy(pool, int graceful)`:
+  - If `graceful == 1`, drains all remaining queued tasks before terminating.
+  - If `graceful == 0`, discards pending tasks and instructs workers to terminate immediately after finishing their current task.
+
+### Non-Requirements
+
+- No dynamic thread auto-scaling (thread count remains fixed for simplicity and deterministic resource limits).
+
+## 5. Interface / API Contract
+
+```c
+typedef void (*task_fn_t)(void *arg);
+
+typedef struct thread_pool thread_pool_t;
+
+thread_pool_t *thread_pool_create(size_t num_threads, size_t queue_capacity);
+int            thread_pool_submit(thread_pool_t *pool, task_fn_t fn, void *arg);
+void           thread_pool_destroy(thread_pool_t *pool, int graceful);
+```
+
+## 6. Implementation Stages
+
+1. **Stage 1 (Task Queue Structure)**: Build a circular FIFO buffer storing function pointer + void\* argument pairs protected by a `pthread_mutex_t`.
+2. **Stage 2 (Signaling & Spurious Wakeups)**: Integrate two condition variables: `not_empty` (signals workers that tasks arrived) and `not_full` (signals producers that space freed).
+3. **Stage 3 (Worker Loop Execution)**: Implement the worker loop: acquire lock, wait while empty, pop task, unlock, execute callback.
+4. **Stage 4 (Shutdown Mechanics)**: Broadcast shutdown flag, join all worker threads (`pthread_join`), and release allocated heap memory.
+
+## 7. Edge Cases & Concurrency Hazards
+
+- **Spurious Wakeup**: A condition variable may unblock without any thread having signaled it (due to OS kernel optimizations and signal deliveries). **Never** write `if (queue_empty) pthread_cond_wait(...)`. Always use a loop: `while (queue_empty && !shutdown) pthread_cond_wait(...)`.
+- **Lost Wakeup**: Signaling a condition variable without holding the associated mutex or failing to broadcast during shutdown leaves threads asleep permanently.
+- **Race Condition on Destruction**: A thread attempting to submit a task while another thread calls `destroy` must be rejected cleanly without undefined behavior.
+
+## 8. Memory Safety & Concurrency Invariants
+
+- Mutex lock and unlock boundaries must be strictly minimal: **never execute the user's task callback while holding the queue lock**. Holding locks during user callbacks destroys concurrency and risks deadlocks.
+
+## 9. Build & Compilation Instructions
+
+Compile with strict ThreadSanitizer flags to detect data races at runtime:
+
+```bash
+clang -std=c17 -Wall -Wextra -pthread -fsanitize=thread -g main.c -o pool_test
+```
+
+## 10. Verification & Test Plan
+
+1. **Basic Submission**: Submit 100 fast tasks; verify all 100 complete.
+2. **High Contention**: 8 producer threads submitting 50,000 tasks simultaneously into a 4-worker pool.
+3. **Graceful Teardown**: Submit 1,000 tasks and immediately call `thread_pool_destroy(pool, 1)`. Confirm all 1,000 tasks execute to completion before function returns.
+
+## 11. Performance Considerations
+
+A single shared mutex queue suffers from lock contention when worker thread counts scale beyond 16–32 cores. Modern multi-threaded runtimes (Go, Rust Tokio, C++ task schedulers) employ **Work-Stealing**, where each thread has a private deque and steals from peers only when idle.
+
+## 12. Reference Implementation
+
+<ReferenceSolution title="thread_pool.c (Complete Reference Solution)" badge="Reveal Code">
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+
+typedef void (*task_fn_t)(void *arg);
+
+typedef struct {
+    task_fn_t fn;
+    void *arg;
+} task_t;
+
+struct thread_pool {
+    pthread_mutex_t lock;
+    pthread_cond_t  not_empty;
+    pthread_cond_t  not_full;
+
+    pthread_t      *threads;
+    task_t         *queue;
+
+    size_t          thread_count;
+    size_t          queue_capacity;
+    size_t          head;
+    size_t          tail;
+    size_t          count;
+
+    int             shutdown; // 0 = running, 1 = graceful, 2 = immediate
+};
+
+static void *worker_routine(void *arg) {
+    struct thread_pool *pool = (struct thread_pool *)arg;
+
+    for (;;) {
+        pthread_mutex_lock(&pool->lock);
+
+        // Wait until there is a task or shutdown has been requested
+        while (pool->count == 0 && pool->shutdown == 0) {
+            pthread_cond_wait(&pool->not_empty, &pool->lock);
+        }
+
+        // Immediate shutdown OR (graceful shutdown with empty queue)
+        if (pool->shutdown == 2 || (pool->shutdown == 1 && pool->count == 0)) {
+            pthread_mutex_unlock(&pool->lock);
+            break;
+        }
+
+        // Pop next task from circular buffer
+        task_t task = pool->queue[pool->head];
+        pool->head = (pool->head + 1) % pool->queue_capacity;
+        pool->count--;
+
+        // Notify waiting producers that queue has available slots
+        pthread_cond_signal(&pool->not_full);
+
+        pthread_mutex_unlock(&pool->lock);
+
+        // Execute task outside the lock
+        if (task.fn) {
+            task.fn(task.arg);
+        }
+    }
+
+    return NULL;
+}
+
+struct thread_pool *thread_pool_create(size_t num_threads, size_t queue_capacity) {
+    if (num_threads == 0 || queue_capacity == 0) return NULL;
+
+    struct thread_pool *pool = malloc(sizeof(struct thread_pool));
+    if (!pool) return NULL;
+
+    pool->thread_count = num_threads;
+    pool->queue_capacity = queue_capacity;
+    pool->head = 0;
+    pool->tail = 0;
+    pool->count = 0;
+    pool->shutdown = 0;
+
+    pool->threads = malloc(sizeof(pthread_t) * num_threads);
+    pool->queue = malloc(sizeof(task_t) * queue_capacity);
+
+    if (!pool->threads || !pool->queue) {
+        free(pool->threads);
+        free(pool->queue);
+        free(pool);
+        return NULL;
+    }
+
+    pthread_mutex_init(&pool->lock, NULL);
+    pthread_cond_init(&pool->not_empty, NULL);
+    pthread_cond_init(&pool->not_full, NULL);
+
+    for (size_t i = 0; i < num_threads; i++) {
+        if (pthread_create(&pool->threads[i], NULL, worker_routine, pool) != 0) {
+            // Teardown on thread creation failure
+            pool->shutdown = 2;
+            pthread_cond_broadcast(&pool->not_empty);
+            for (size_t j = 0; j < i; j++) {
+                pthread_join(pool->threads[j], NULL);
+            }
+            pthread_mutex_destroy(&pool->lock);
+            pthread_cond_destroy(&pool->not_empty);
+            pthread_cond_destroy(&pool->not_full);
+            free(pool->threads);
+            free(pool->queue);
+            free(pool);
+            return NULL;
+        }
+    }
+
+    return pool;
+}
+
+int thread_pool_submit(struct thread_pool *pool, task_fn_t fn, void *arg) {
+    if (!pool || !fn) return -1;
+
+    pthread_mutex_lock(&pool->lock);
+
+    // Reject submissions if pool is shutting down
+    if (pool->shutdown != 0) {
+        pthread_mutex_unlock(&pool->lock);
+        return -1;
+    }
+
+    // Wait if queue is full
+    while (pool->count == pool->queue_capacity && pool->shutdown == 0) {
+        pthread_cond_wait(&pool->not_full, &pool->lock);
+    }
+
+    if (pool->shutdown != 0) {
+        pthread_mutex_unlock(&pool->lock);
+        return -1;
+    }
+
+    // Insert task at tail
+    pool->queue[pool->tail].fn = fn;
+    pool->queue[pool->tail].arg = arg;
+    pool->tail = (pool->tail + 1) % pool->queue_capacity;
+    pool->count++;
+
+    // Notify waiting workers
+    pthread_cond_signal(&pool->not_empty);
+
+    pthread_mutex_unlock(&pool->lock);
+    return 0;
+}
+
+void thread_pool_destroy(struct thread_pool *pool, int graceful) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&pool->lock);
+    pool->shutdown = graceful ? 1 : 2;
+    pthread_cond_broadcast(&pool->not_empty);
+    pthread_cond_broadcast(&pool->not_full);
+    pthread_mutex_unlock(&pool->lock);
+
+    // Join all worker threads
+    for (size_t i = 0; i < pool->thread_count; i++) {
+        pthread_join(pool->threads[i], NULL);
+    }
+
+    // Release synchronization primitives and memory
+    pthread_mutex_destroy(&pool->lock);
+    pthread_cond_destroy(&pool->not_empty);
+    pthread_cond_destroy(&pool->not_full);
+
+    free(pool->threads);
+    free(pool->queue);
+    free(pool);
+}
+```
+
+</ReferenceSolution>

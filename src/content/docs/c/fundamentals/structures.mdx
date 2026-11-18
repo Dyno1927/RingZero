@@ -1,0 +1,118 @@
+---
+title: Structures in C
+description: Memory layout, alignment requirements, structure padding, and flexible array members in C.
+---
+
+A `struct` in C is a composite type that defines a physically grouped list of heterogeneous variables allocated under a single memory block. Struct members are sequenced in memory in the exact order they are declared.
+
+## Memory Alignment and Padding
+
+CPUs access memory most efficiently (and on architectures like SPARC or older ARM, exclusively) when data is aligned to multiples of its size. For instance, on standard x86-64 and AArch64:
+
+- `char` (1 byte): 1-byte aligned
+- `short` (2 bytes): 2-byte aligned (address must be divisible by 2)
+- `int` / `float` (4 bytes): 4-byte aligned (address must be divisible by 4)
+- `double` / pointers / `uint64_t` (8 bytes): 8-byte aligned (address must be divisible by 8)
+
+To enforce alignment, the compiler inserts unseen **padding bytes** between members and at the end of the structure:
+
+```c
+struct PaddedExample {
+    char a;     // 1 byte
+    // 3 padding bytes inserted here
+    int b;      // 4 bytes (aligned to 4-byte boundary)
+    char c;     // 1 byte
+    // 3 padding bytes inserted at the end
+};
+```
+
+Although the useful payload is $1 + 4 + 1 = 6$ bytes, `sizeof(struct PaddedExample)` evaluates to **12 bytes**:
+
+```text
+Offset: 0    1    2    3    4    5    6    7    8    9    10   11
+Field: [a]  [  padding  ]  [      b      ]  [c]  [  padding  ]
+```
+
+The tail padding ensures that when an array of structs (`struct PaddedExample arr[2]`) is allocated, the second element begins on an alignment boundary matching the struct's maximum alignment requirement (4 bytes).
+
+## Calculating Offsets: `offsetof`
+
+The standard `<stddef.h>` header provides the `offsetof` macro to retrieve the exact byte offset of any member:
+
+```c
+#include <stddef.h>
+#include <stdio.h>
+
+struct PaddedExample {
+    char a;
+    int b;
+    char c;
+};
+
+int main(void) {
+    printf("Offset a: %zu\n", offsetof(struct PaddedExample, a)); // 0
+    printf("Offset b: %zu\n", offsetof(struct PaddedExample, b)); // 4
+    printf("Offset c: %zu\n", offsetof(struct PaddedExample, c)); // 8
+    printf("Total size: %zu\n", sizeof(struct PaddedExample));    // 12
+}
+```
+
+## Field Reordering Optimization
+
+Reordering fields from largest alignment requirement to smallest eliminates internal padding:
+
+```c
+struct Optimized {
+    int b;      // 4 bytes (Offset 0)
+    char a;     // 1 byte  (Offset 4)
+    char c;     // 1 byte  (Offset 5)
+    // 2 trailing padding bytes to reach 4-byte multiple
+}; // Total size: 8 bytes (saved 33% memory)
+```
+
+## Structure Packing: `__attribute__((packed))`
+
+Compilers provide extensions (`__attribute__((packed))` in GCC/Clang or `#pragma pack` in MSVC) to suppress all padding bytes. This is often used for wire protocols or hardware register overlays:
+
+```c
+struct __attribute__((packed)) WirePacket {
+    uint8_t  type;    // 1 byte
+    uint32_t length;  // 4 bytes (starts at unaligned offset 1)
+}; // Total size: exactly 5 bytes
+```
+
+:::caution[Performance & Fault Hazards of Packed Structs]
+
+1. Taking the address of an unaligned member (`uint32_t *len = &packet.length;`) and dereferencing it is **Undefined Behavior** in C. On architectures that do not support unaligned loads in hardware, this triggers an immediate hardware alignment fault (`SIGBUS`).
+2. Even on x86-64 (which handles unaligned memory accesses in microcode), unaligned loads that cross cache lines cause severe latency penalties.
+   :::
+
+## Flexible Array Members (C99 §6.7.2.1)
+
+A structure can declare an unsized array as its final member: a Flexible Array Member (FAM). This allows allocating a variable-length buffer contiguously in the same allocation:
+
+```c
+#include <stdlib.h>
+#include <string.h>
+
+struct Packet {
+    uint32_t length;
+    uint8_t payload[]; // Flexible Array Member (must be last)
+};
+
+struct Packet *create_packet(const uint8_t *data, uint32_t len) {
+    // Allocate struct header + payload bytes in one single malloc
+    struct Packet *pkt = malloc(sizeof(struct Packet) + len);
+    if (!pkt) return NULL;
+
+    pkt->length = len;
+    memcpy(pkt->payload, data, len);
+    return pkt;
+}
+```
+
+Benefits of FAM over an indirect pointer (`uint8_t *payload`):
+
+1. **Single Allocation**: Header and data reside in one cache-friendly memory block.
+2. **Zero Memory Fragmentation**: One `malloc` and one `free` call for the entire object.
+3. **No Pointer Indirection Overhead**: Eliminates 8 bytes of pointer storage and a secondary pointer dereference.

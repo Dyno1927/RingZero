@@ -1,0 +1,151 @@
+---
+title: libcurl Guide
+description: Architecture, easy interface lifecycle, write callbacks, thread safety, and memory management in libcurl.
+---
+
+`libcurl` is the industry-standard client-side URL transfer library, supporting HTTP, HTTPS, FTP, and dozens of protocols. It provides two primary paradigms:
+
+- **Easy Interface**: Synchronous, blocking single-request transfers.
+- **Multi Interface**: Asynchronous, non-blocking multiplexed transfers using an event loop or socket polling.
+
+## Header & Linkage
+
+```c
+#include <curl/curl.h>
+```
+
+Link against `libcurl` using `pkg-config`:
+
+```bash
+clang -Wall -Wextra main.c $(pkg-config --cflags --libs libcurl) -o fetcher
+```
+
+## Core Mental Model & Handle Lifecycle
+
+A transfer in libcurl follows a strict 5-stage lifecycle:
+
+```text
+curl_global_init()
+       ↓
+curl_easy_init() ──→ returns CURL* handle
+       ↓
+curl_easy_setopt() ──→ sets options (URL, headers, callbacks, timeouts)
+       ↓
+curl_easy_perform() ──→ executes synchronous blocking network transfer
+       ↓
+curl_easy_cleanup() ──→ destroys handle & frees internal buffers
+       ↓
+curl_global_cleanup()
+```
+
+1. **Global Initialization**: `curl_global_init(CURL_GLOBAL_DEFAULT)` initializes underlying SSL/TLS backends and socket layers. It is **not thread-safe** and must be called once during process startup before spawning worker threads.
+2. **Handle Allocation**: `curl_easy_init()` allocates a transfer handle maintaining connection cache, cookies, and transfer state.
+3. **Configuration**: Options are attached via `curl_easy_setopt()`.
+4. **Execution**: `curl_easy_perform()` drives the protocol state machine.
+5. **Teardown**: Free the handle with `curl_easy_cleanup()`, and at program exit, invoke `curl_global_cleanup()`.
+
+## Memory Management & Write Callbacks
+
+By default, libcurl writes received response payloads directly to `stdout`. To capture responses in memory, configure a custom write callback via `CURLOPT_WRITEFUNCTION`:
+
+```c
+size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
+```
+
+- `size` is always 1 in libcurl.
+- `nmemb` is the number of bytes delivered in this chunk.
+- `userdata` is an arbitrary pointer passed via `CURLOPT_WRITEDATA`.
+- **Return Value Requirement**: The callback **must** return the exact number of bytes handled (`size * nmemb`). Returning any other number aborts the transfer with `CURLE_WRITE_ERROR`.
+
+### Growing Buffer Struct
+
+```c
+#include <stdlib.h>
+#include <string.h>
+
+struct MemoryBuffer {
+    char *data;
+    size_t size;
+    size_t capacity;
+};
+
+static size_t write_memory_callback(char *contents, size_t size, size_t nmemb, void *userp) {
+    size_t incoming_bytes = size * nmemb;
+    struct MemoryBuffer *mem = (struct MemoryBuffer *)userp;
+
+    // Ensure capacity for new data plus trailing null terminator
+    if (mem->size + incoming_bytes + 1 > mem->capacity) {
+        size_t new_cap = mem->capacity ? mem->capacity * 2 : 4096;
+        while (new_cap < mem->size + incoming_bytes + 1) {
+            new_cap *= 2;
+        }
+
+        char *new_ptr = realloc(mem->data, new_cap);
+        if (!new_ptr) return 0; // Allocation failure aborts transfer safely
+
+        mem->data = new_ptr;
+        mem->capacity = new_cap;
+    }
+
+    memcpy(&(mem->data[mem->size]), contents, incoming_bytes);
+    mem->size += incoming_bytes;
+    mem->data[mem->size] = '\0';
+
+    return incoming_bytes;
+}
+```
+
+## Complete Idiomatic Example
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <curl/curl.h>
+
+int main(void) {
+    CURLcode global_res = curl_global_init(CURL_GLOBAL_ALL);
+    if (global_res != CURLE_OK) {
+        fprintf(stderr, "curl_global_init failed: %s\n", curl_easy_strerror(global_res));
+        return 1;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        curl_global_cleanup();
+        return 1;
+    }
+
+    struct MemoryBuffer response = {0};
+
+    // Configure options
+    curl_easy_setopt(curl, CURLOPT_URL, "https://api.github.com/zen");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "syscore-agent/1.0");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L); // 10 second timeout
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&response);
+
+    // Execute transfer
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        long response_code;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        printf("HTTP %ld\nPayload:\n%s\n", response_code, response.data);
+    } else {
+        fprintf(stderr, "Transfer failed: %s\n", curl_easy_strerror(res));
+    }
+
+    // Cleanup resources
+    free(response.data);
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+
+    return 0;
+}
+```
+
+## Thread Safety Invariants
+
+- **Initialization**: `curl_global_init()` and `curl_global_cleanup()` are **not thread-safe**. Call them strictly on the main thread before starting background threads.
+- **Handle Isolation**: A `CURL*` easy handle cannot be shared simultaneously across multiple threads. Each worker thread must own its own easy handle, or synchronize access through a mutex.
+- **DNS Timeouts & Signals**: On Unix systems without the asynchronous DNS resolver backend (`c-ares`), libcurl may use POSIX signals (`SIGALRM`) for DNS timeouts. In multi-threaded applications, set `CURLOPT_NOSIGNAL = 1L` to prevent signals from terminating worker threads.

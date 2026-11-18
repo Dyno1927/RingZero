@@ -1,0 +1,76 @@
+---
+title: Learning C — Beginner to Intermediate
+description: A systems-first roadmap for mastering C, toolchains, sanitizers, and OS interfaces.
+---
+
+Learning C as a systems programming language requires shifting from thinking in abstract high-level types to understanding how code executes on bare silicon and interacts with the operating system.
+
+## Phase 1: Machine Models & Language Fundamentals
+
+Before writing complex algorithms, internalize the memory architecture:
+
+- **Virtual Address Space**: Understand the separation of process memory:
+  - Text Segment (`.text`): Executable machine instructions.
+  - Initialized Data (`.data`): Global and static variables with initial values.
+  - Uninitialized Data (`.bss`): Zero-initialized static memory.
+  - Heap: Dynamically allocated memory managed at runtime via `brk`/`sbrk` and `mmap`.
+  - Stack: Automatic local variables, stack frames, return addresses, and register spills.
+- **Strict Typing & Integer Representation**: Signed vs unsigned arithmetic, two's complement, integer overflow (undefined behavior for signed integers in C), and integer promotion rules.
+
+```bash
+# Build with strict warning discipline from day one
+clang -std=c17 -Wall -Wextra -Wpedantic -Werror main.c -o app
+```
+
+## Phase 2: Pointers, Memory Ownership & Sanitizers
+
+This phase transitions you from syntax to memory ownership discipline:
+
+- Master single and double indirection (`int*`, `int**`).
+- Contiguous storage vs pointer indirection.
+- Understand pointer arithmetic and `sizeof` scaling.
+- Manual heap management: `malloc`, `calloc`, `realloc`, and `free`.
+- **Debugging with LLVM Sanitizers**: Never debug memory bugs by guessing. Compile with AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```bash
+# Enable ASan and UBSan during local development
+clang -fsanitize=address,undefined -g -O1 main.c -o app
+```
+
+### Milestone Project 1: Dynamic Array (Vector)
+
+Construct a generic, heap-allocated dynamic array that manages capacity doubling, amortized $O(1)$ append, element shrinkage, and proper deallocation.
+
+## Phase 3: The System Call Boundary & POSIX I/O
+
+C is the language of Unix. Learn how the runtime transitions across the kernel boundary:
+
+- File descriptors vs `FILE*` streams: Understand buffering in `stdio.h` versus unbuffered system calls (`open`, `read`, `write`, `close`).
+- Error reporting: `errno`, `perror()`, and `strerror()`.
+- Process creation: `fork()`, `execve()`, and `waitpid()`.
+- Signal handling: Signal masks, reentrant functions, and `sigaction`.
+
+### Milestone Project 2: Command-Line Task Manager
+
+Build a persistent command-line tool that stores structured binary records on disk using POSIX file I/O, atomic temporary file swaps, and binary serialization.
+
+## Phase 4: Pure Systems Data Structures
+
+Implement core computer science primitives without relying on an external library:
+
+- **Intrusive Data Structures**: Learn how real systems (like the Linux kernel `list_head`) embed pointers inside structs rather than wrapping values in separate heap allocations.
+- **Cache-Conscious Hash Table**: Build a hash map using open addressing (linear probing or Robin Hood hashing) to understand CPU cache line utilization compared to linked-list bucket chaining.
+- **Custom Memory Arena**: Write a bump allocator (arena allocator) that takes a single 1MB memory block and serves sub-allocations in $O(1)$ time without per-object `malloc` overhead.
+
+## Phase 5: Concurrency & Networking
+
+Scale systems to handle simultaneous tasks and network protocols:
+
+- **POSIX Threads (`pthreads`)**: Thread creation, join, mutexes (`pthread_mutex_t`), condition variables (`pthread_cond_t`), and memory visibility.
+- **Deadlock and Race Prevention**: Compile with `-fsanitize=thread` (TSan) to detect data races at runtime.
+- **Berkeley Sockets**: `socket()`, `bind()`, `listen()`, `accept()`, `connect()`.
+- **Event-Driven I/O**: Transition from blocking I/O to multiplexed non-blocking architectures with Linux `epoll` or BSD `kqueue`.
+
+### Milestone Project 3: Thread Pool
+
+Implement a bounded task queue with worker threads, graceful shutdown mechanics, and condition variable signaling under high lock contention.

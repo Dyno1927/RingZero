@@ -7,6 +7,7 @@ Systems programming, explained from the metal up.
 ## Why I'm Building This
 
 Most online C and C++ tutorials either stop at basic syntax or gloss over real memory models and UB. [name] is designed to be a long-term, high-accuracy technical reference:
+
 - Accurate depth over page count: no hand-waving around undefined behavior or compiler-specific quirks.
 - Real, buildable projects with progressive disclosure (hidden reference solutions).
 - Clean, fast, zero-fluff static reference without LMS gimmicks, logins, or trackers.

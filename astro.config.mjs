@@ -1,86 +1,85 @@
-import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
+import { defineConfig } from "astro/config";
+import starlight from "@astrojs/starlight";
 
 // https://astro.build/config
 export default defineConfig({
-  output: 'static',
+  output: "static",
   integrations: [
     starlight({
-      title: '[name]',
-      description: 'Systems programming, explained from the metal up. C and C++ internals, memory, and OS interfaces.',
+      title: "[name]",
+      description:
+        "Systems programming, explained from the metal up. C and C++ internals, memory, and OS interfaces.",
       social: {
-        github: 'https://github.com/Dyno1927/[name]',
+        github: "https://github.com/Dyno1927/[name]",
       },
-      customCss: ['./src/styles/custom.css'],
+      customCss: ["./src/styles/custom.css"],
       sidebar: [
         {
-          label: 'C',
+          label: "C",
           items: [
             {
-              label: 'Fundamentals',
+              label: "Fundamentals",
               collapsed: false,
               items: [
-                { label: 'Pointers', link: '/c/fundamentals/pointers' },
-                { label: 'Arrays', link: '/c/fundamentals/arrays' },
-                { label: 'Structures', link: '/c/fundamentals/structures' },
+                { label: "Pointers", slug: "c/fundamentals/pointers" },
+                { label: "Arrays", slug: "c/fundamentals/arrays" },
+                { label: "Structures", slug: "c/fundamentals/structures" },
               ],
             },
             {
-              label: 'Memory (Planned)',
-              badge: 'Planned',
+              label: "Memory",
+              badge: { text: "Planned", variant: "caution" },
               collapsed: true,
               items: [
-                { label: 'Malloc Family', link: '/c/memory/malloc-family' },
-                { label: 'Dangling Pointers', link: '/c/memory/dangling-pointers' },
+                { label: "Malloc Family (Planned)", link: "/planned" },
+                { label: "Dangling Pointers (Planned)", link: "/planned" },
               ],
             },
           ],
         },
         {
-          label: 'C++',
+          label: "C++",
           items: [
             {
-              label: 'Fundamentals',
+              label: "Fundamentals",
               collapsed: false,
               items: [
-                { label: 'Classes', link: '/cpp/fundamentals/classes' },
-                { label: 'RAII', link: '/cpp/fundamentals/raii' },
+                { label: "Classes", slug: "cpp/fundamentals/classes" },
+                { label: "RAII & Lifetimes", slug: "cpp/fundamentals/raii" },
               ],
             },
             {
-              label: 'Concurrency (Planned)',
-              badge: 'Planned',
+              label: "Concurrency",
+              badge: { text: "Planned", variant: "caution" },
               collapsed: true,
               items: [
-                { label: 'Threads & Mutexes', link: '/cpp/concurrency/threads' },
+                { label: "Threads & Mutexes (Planned)", link: "/planned" },
               ],
             },
           ],
         },
         {
-          label: 'Roadmaps',
+          label: "Roadmaps",
+          items: [{ label: "Learning C", slug: "roadmaps/learning-c" }],
+        },
+        {
+          label: "Libraries",
+          items: [{ label: "libcurl", slug: "libraries/libcurl" }],
+        },
+        {
+          label: "APIs & SDKs",
+          items: [{ label: "POSIX File I/O", slug: "apis/posix-file-io" }],
+        },
+        {
+          label: "Projects",
           items: [
-            { label: 'Learning C (Beginner to Intermediate)', link: '/roadmaps/learning-c' },
+            { label: "CLI Task Manager", slug: "projects/cli-task-manager" },
+            { label: "Thread Pool", slug: "projects/thread-pool" },
           ],
         },
         {
-          label: 'Libraries',
-          items: [
-            { label: 'libcurl', link: '/libraries/libcurl' },
-          ],
-        },
-        {
-          label: 'APIs & SDKs',
-          items: [
-            { label: 'POSIX File I/O', link: '/apis/posix-file-io' },
-          ],
-        },
-        {
-          label: 'Projects',
-          items: [
-            { label: 'CLI Task Manager (Beginner)', link: '/projects/cli-task-manager' },
-            { label: 'Thread Pool (Intermediate)', link: '/projects/thread-pool' },
-          ],
+          label: "Architecture Roadmap",
+          slug: "planned",
         },
       ],
     }),

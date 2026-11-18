@@ -1,0 +1,110 @@
+---
+title: POSIX File I/O
+description: Low-level system calls, kernel file tables, partial read/write loops, and signal interruption semantics.
+---
+
+POSIX File I/O provides direct, unbuffered access to the operating system's virtual file system (VFS) layer. Unlike C standard library streams (`FILE*`), POSIX system calls operate on raw integer **file descriptors** (`int`).
+
+## Headers & Function Signatures
+
+```c
+#include <fcntl.h>    // open, fcntl, O_* constants
+#include <unistd.h>   // read, write, close, lseek
+#include <sys/stat.h> // mode_t constants (S_IRUSR, S_IWUSR, etc.)
+```
+
+The primary system call interfaces defined in POSIX.1-2008:
+
+```c
+int open(const char *pathname, int flags, ... /* mode_t mode */);
+ssize_t read(int fd, void *buf, size_t count);
+ssize_t write(int fd, const void *buf, size_t count);
+off_t lseek(int fd, off_t offset, int whence);
+int close(int fd);
+```
+
+## Kernel Architecture: How File Descriptors Work
+
+Inside the Linux/Unix kernel, three data structures govern I/O:
+
+```text
+Process A Descriptor Table     System-Wide Open File Table        VFS Inode Table
+┌────────────────────────┐      ┌──────────────────────────┐      ┌─────────────┐
+│ fd 0 (stdin)           │      │ File Description 1       │      │ Inode /dev  │
+│ fd 1 (stdout)          │      │ - Offset: 4096           │ ───→ │ - File type │
+│ fd 2 (stderr)          │      │ - Flags: O_RDONLY        │      │ - Permissions
+│ fd 3 (data.txt) ───────┼─────→│ - Inode pointer ─────────┼──┐   └─────────────┘
+└────────────────────────┘      └──────────────────────────┘  │   ┌─────────────┐
+Process B Descriptor Table                                    └──→│ Inode       │
+┌────────────────────────┐      ┌──────────────────────────┐      │ data.txt    │
+│ fd 3 (data.txt) ───────┼─────→│ File Description 2       │      │ - Size      │
+└────────────────────────┘      │ - Offset: 0              │ ────→│ - Blocks    │
+                                │ - Flags: O_WRONLY        │      └─────────────┘
+                                └──────────────────────────┘
+```
+
+1. **Per-Process File Descriptor Table**: Maps local integer indexes (`0, 1, 2, 3...`) to entries in the system-wide open file table.
+2. **System-Wide Open File Description Table**: Maintains the current read/write byte offset, file status flags (`O_NONBLOCK`, `O_APPEND`), and reference counts.
+3. **VFS Inode Table**: Holds actual physical filesystem metadata (size, permissions, physical disk blocks).
+
+## Flags and Access Modes
+
+### Access Modes (`O_RDONLY`, `O_WRONLY`, `O_RDWR`)
+
+These are mutually exclusive. To test them from `fcntl(fd, F_GETFL)`, mask with `O_ACCMODE`:
+
+```c
+int access_mode = flags & O_ACCMODE;
+if (access_mode == O_RDONLY) { /* ... */ }
+```
+
+### Creation & Status Flags
+
+- `O_CREAT`: Creates the file if it does not exist. **Requires providing the third `mode_t` argument** (e.g., `0644` or `S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH`). Omitting `mode` when `O_CREAT` is present reads random stack garbage as permissions.
+- `O_EXCL`: When combined with `O_CREAT`, ensures atomic creation. Fails with `EEXIST` if the file already exists, eliminating race conditions.
+- `O_TRUNC`: If the file exists, truncates length to 0.
+- `O_APPEND`: Moves the offset to the end of the file before every write atomically.
+- `O_CLOEXEC`: Sets the close-on-exec flag atomically, preventing file descriptor leaks into child processes spawned via `fork()` / `exec()`.
+
+## Handling Partial Transfers and `EINTR`
+
+A critical difference between high-level abstractions and raw system calls is that `read` and `write` are allowed to transfer fewer bytes than requested:
+
+- Network sockets and pipes return partial data as packets arrive.
+- **Signal Interruption (`EINTR`)**: If a process catches a signal during a blocking read or write, the system call is interrupted and returns `-1` with `errno == EINTR`.
+
+Production systems code **must** wrap `read` and `write` in resilient loops:
+
+```c
+#include <unistd.h>
+#include <errno.h>
+#include <stddef.h>
+
+// Guarantees all 'count' bytes are written unless a fatal error occurs
+ssize_t write_all(int fd, const void *buf, size_t count) {
+    const char *p = (const char *)buf;
+    size_t total_written = 0;
+
+    while (total_written < count) {
+        ssize_t n = write(fd, p + total_written, count - total_written);
+        if (n < 0) {
+            if (errno == EINTR) continue; // Interrupted by signal; retry
+            return -1; // Unrecoverable I/O error
+        }
+        total_written += (size_t)n;
+    }
+
+    return (ssize_t)total_written;
+}
+```
+
+## Atomic Positional I/O: `pread` and `pwrite`
+
+In multi-threaded servers sharing a file descriptor, concurrent `lseek()` followed by `read()` creates a data race on the kernel offset:
+
+```c
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+```
+
+`pread` and `pwrite` perform positional I/O atomically without updating or altering the file descriptor's internal offset, allowing multiple threads to safely read from the same file concurrently.

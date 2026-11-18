@@ -1,0 +1,315 @@
+---
+title: Command-Line Task Manager
+description: Build a persistent, binary-backed CLI task management utility in C.
+---
+
+import { Badge } from "@astrojs/starlight/components";
+import ReferenceSolution from "../../../components/ReferenceSolution.astro";
+
+<div class="proj-tags">
+  <Badge text="Beginner" variant="success" />
+  <Badge text="C" variant="note" />
+</div>
+
+## 1. Overview & Objective
+
+Build `taskcli`, a fast, persistent command-line task manager written in pure C. The tool manages structured task records stored in a binary format on disk, demonstrating file system interaction, binary serialization, record manipulation, and atomic crash-resilient file writes.
+
+## 2. Prerequisites & Concepts
+
+- **C Fundamentals**: Structures, arrays, string manipulation (`strtok`, `snprintf`), pointers.
+- **POSIX I/O**: `open`, `read`, `write`, `close`, `rename`, `unlink`.
+- **Atomic Operations**: Replacing files atomically using filesystem metadata swaps (`rename()`).
+
+## 3. System Architecture
+
+```text
+       CLI Invocation (argc, argv)
+                   │
+                   ▼
+       Command Dispatcher (add / list / done / delete)
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+    Read State         Apply Mutation
+   (tasks.bin)        (Memory Buffer)
+                             │
+                             ▼
+                     Atomic File Swap
+                   (tasks.tmp ──→ tasks.bin)
+```
+
+## 4. Scope & Requirements
+
+### Functional Requirements
+
+- `taskcli add "Description"`: Adds a new task with state `PENDING` and a sequential auto-incrementing ID.
+- `taskcli list`: Displays all tasks formatted in columns: `ID`, `Status`, `Description`.
+- `taskcli done <ID>`: Toggles task state to `COMPLETED`.
+- `taskcli delete <ID>`: Permanently removes a task from the database.
+
+### Non-Requirements
+
+- No external libraries (no SQLite, no JSON parsers, no third-party CLI frameworks).
+- No complex multi-user permission systems.
+
+## 5. Interface & Data Structures
+
+```c
+#include <stdint.h>
+#include <time.h>
+
+#define MAX_DESC_LEN 128
+#define DB_FILE "tasks.bin"
+
+typedef enum {
+    TASK_PENDING = 0,
+    TASK_COMPLETED = 1
+} TaskStatus;
+
+typedef struct {
+    uint32_t id;
+    uint32_t status; // TaskStatus
+    int64_t  created_at;
+    char     description[MAX_DESC_LEN];
+} TaskRecord;
+```
+
+## 6. Implementation Stages
+
+1. **Stage 1 (CLI Argument Parser)**: Validate `argc` and match commands (`add`, `list`, `done`, `delete`).
+2. **Stage 2 (Binary Storage Loading)**: Read existing `TaskRecord` entries sequentially from `tasks.bin`.
+3. **Stage 3 (Task Creation & Append)**: Allocate sequential IDs and append records to the binary file.
+4. **Stage 4 (In-Place Mutation & Atomic Replacement)**: Update record status and write out to a temporary file (`tasks.tmp`), replacing `tasks.bin` atomically with `rename()`.
+
+## 7. Edge Cases & Gotchas
+
+- **Truncated Files**: If `tasks.bin` terminates prematurely mid-struct, reject corrupted records and report an error.
+- **Buffer Overflow in Description**: Use `strncpy` or `snprintf` with explicit null termination: never use `strcpy` or `gets`.
+- **Crash During Save**: Writing directly to the active `tasks.bin` file causes total database loss if the process is killed (`SIGKILL`) or power fails mid-write. Always write to a temporary file first, `fsync()`, and then `rename()`.
+
+## 8. Memory Safety Invariants
+
+- Explicitly zero-initialize newly declared structs (`TaskRecord record = {0};`) to prevent leaking uninitialized stack memory to disk.
+- Never cast raw bytes from disk without verifying `read()` return values against `sizeof(TaskRecord)`.
+
+## 9. Build & Compilation Instructions
+
+Compile with strict compiler warnings and AddressSanitizer:
+
+```bash
+clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -g main.c -o taskcli
+```
+
+## 10. Verification & Test Plan
+
+1. **Add**: Add 3 tasks and verify with `hexdump -C tasks.bin`.
+2. **List**: Confirm IDs and descriptions format correctly.
+3. **Completion**: Mark ID 2 done; verify status changes while IDs 1 and 3 remain unaffected.
+4. **Deletion**: Delete ID 1; verify remaining elements compress cleanly.
+
+## 11. Performance Considerations
+
+Because tasks are fixed-size 144-byte binary records, seeking to task $N$ is an $O(1)$ disk offset calculation (`lseek(fd, N * sizeof(TaskRecord), SEEK_SET)`), eliminating full-file parsing overhead found in JSON/CSV alternatives.
+
+## 12. Reference Implementation
+
+<ReferenceSolution title="taskcli.c (Complete Reference Solution)" badge="Reveal Code">
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <time.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+
+#define MAX_DESC_LEN 128
+#define DB_FILE "tasks.bin"
+#define TMP_FILE "tasks.tmp"
+
+typedef enum {
+    TASK_PENDING = 0,
+    TASK_COMPLETED = 1
+} TaskStatus;
+
+typedef struct {
+    uint32_t id;
+    uint32_t status;
+    int64_t  created_at;
+    char     description[MAX_DESC_LEN];
+} TaskRecord;
+
+static void print_usage(const char *prog) {
+    fprintf(stderr, "Usage:\n");
+    fprintf(stderr, "  %s add <description>\n", prog);
+    fprintf(stderr, "  %s list\n", prog);
+    fprintf(stderr, "  %s done <id>\n", prog);
+    fprintf(stderr, "  %s delete <id>\n", prog);
+}
+
+static uint32_t get_next_id(void) {
+    int fd = open(DB_FILE, O_RDONLY);
+    if (fd < 0) return 1;
+
+    TaskRecord rec;
+    uint32_t max_id = 0;
+    while (read(fd, &rec, sizeof(TaskRecord)) == sizeof(TaskRecord)) {
+        if (rec.id > max_id) max_id = rec.id;
+    }
+    close(fd);
+    return max_id + 1;
+}
+
+static int cmd_add(const char *desc) {
+    TaskRecord rec = {0};
+    rec.id = get_next_id();
+    rec.status = TASK_PENDING;
+    rec.created_at = (int64_t)time(NULL);
+    snprintf(rec.description, sizeof(rec.description), "%s", desc);
+
+    int fd = open(DB_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        perror("open tasks.bin");
+        return 1;
+    }
+
+    if (write(fd, &rec, sizeof(TaskRecord)) != sizeof(TaskRecord)) {
+        perror("write record");
+        close(fd);
+        return 1;
+    }
+
+    close(fd);
+    printf("Task %u added: \"%s\"\n", rec.id, rec.description);
+    return 0;
+}
+
+static int cmd_list(void) {
+    int fd = open(DB_FILE, O_RDONLY);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            printf("No tasks found. Use 'taskcli add <desc>' to create one.\n");
+            return 0;
+        }
+        perror("open tasks.bin");
+        return 1;
+    }
+
+    printf("%-6s %-12s %s\n", "ID", "STATUS", "DESCRIPTION");
+    printf("--------------------------------------------------\n");
+
+    TaskRecord rec;
+    int count = 0;
+    while (read(fd, &rec, sizeof(TaskRecord)) == sizeof(TaskRecord)) {
+        const char *status_str = (rec.status == TASK_COMPLETED) ? "[COMPLETED]" : "[PENDING]";
+        printf("%-6u %-12s %s\n", rec.id, status_str, rec.description);
+        count++;
+    }
+
+    close(fd);
+    if (count == 0) {
+        printf("(0 tasks recorded)\n");
+    }
+    return 0;
+}
+
+static int cmd_mutate(uint32_t target_id, int delete_task) {
+    int in_fd = open(DB_FILE, O_RDONLY);
+    if (in_fd < 0) {
+        perror("open tasks.bin");
+        return 1;
+    }
+
+    int out_fd = open(TMP_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out_fd < 0) {
+        perror("open tasks.tmp");
+        close(in_fd);
+        return 1;
+    }
+
+    TaskRecord rec;
+    int found = 0;
+
+    while (read(in_fd, &rec, sizeof(TaskRecord)) == sizeof(TaskRecord)) {
+        if (rec.id == target_id) {
+            found = 1;
+            if (delete_task) {
+                continue; // Skip writing this record
+            } else {
+                rec.status = TASK_COMPLETED;
+            }
+        }
+        if (write(out_fd, &rec, sizeof(TaskRecord)) != sizeof(TaskRecord)) {
+            perror("write tasks.tmp");
+            close(in_fd);
+            close(out_fd);
+            unlink(TMP_FILE);
+            return 1;
+        }
+    }
+
+    close(in_fd);
+    close(out_fd);
+
+    if (!found) {
+        fprintf(stderr, "Error: Task ID %u not found.\n", target_id);
+        unlink(TMP_FILE);
+        return 1;
+    }
+
+    // Atomic replacement
+    if (rename(TMP_FILE, DB_FILE) != 0) {
+        perror("atomic swap rename");
+        return 1;
+    }
+
+    if (delete_task) {
+        printf("Task %u deleted successfully.\n", target_id);
+    } else {
+        printf("Task %u marked as completed.\n", target_id);
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    const char *action = argv[1];
+
+    if (strcmp(action, "add") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: 'add' requires a task description.\n");
+            return 1;
+        }
+        return cmd_add(argv[2]);
+    } else if (strcmp(action, "list") == 0) {
+        return cmd_list();
+    } else if (strcmp(action, "done") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: 'done' requires a task ID.\n");
+            return 1;
+        }
+        uint32_t id = (uint32_t)strtoul(argv[2], NULL, 10);
+        return cmd_mutate(id, 0);
+    } else if (strcmp(action, "delete") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: 'delete' requires a task ID.\n");
+            return 1;
+        }
+        uint32_t id = (uint32_t)strtoul(argv[2], NULL, 10);
+        return cmd_mutate(id, 1);
+    } else {
+        fprintf(stderr, "Unknown command '%s'.\n", action);
+        print_usage(argv[0]);
+        return 1;
+    }
+}
+```
+
+</ReferenceSolution>

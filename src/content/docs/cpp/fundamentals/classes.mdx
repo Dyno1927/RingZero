@@ -1,0 +1,140 @@
+---
+title: Classes in C++
+description: Object memory layout, construction lifecycle, special member functions, and the Rule of Five in C++.
+---
+
+In C++, a `class` defines a user-defined type encapsulating state (member variables) and behavior (member functions). At the memory level, a class without virtual functions has the exact same memory layout and alignment rules as an equivalent C `struct`.
+
+The fundamental difference between `class` and `struct` in C++ is default visibility:
+
+- `class` members and base classes default to `private`.
+- `struct` members and base classes default to `public`.
+
+## Object Memory Layout & the `this` Pointer
+
+Non-static member functions do not occupy space inside individual object instances. When an object invokes a member function, the compiler implicitly passes a pointer to the calling instance (the `this` pointer), typically via the first argument register (e.g., `RDI` in the x86-64 System V ABI):
+
+```cpp
+class Vector2D {
+private:
+    float x; // 4 bytes (offset 0)
+    float y; // 4 bytes (offset 4)
+
+public:
+    Vector2D(float x_, float y_) : x(x_), y(y_) {}
+
+    float magnitudeSquared() const {
+        // Under the hood: float Vector2D_magnitudeSquared(const Vector2D *this);
+        return this->x * this->x + this->y * this->y;
+    }
+};
+
+static_assert(sizeof(Vector2D) == 8, "Vector2D must be exactly 8 bytes");
+```
+
+## Member Initialization Order
+
+In a constructor initialization list, members are initialized **in the order they are declared in the class definition**, not in the order written in the constructor initializer list:
+
+```cpp
+class BufferManager {
+    size_t capacity;
+    char *buffer;
+
+public:
+    // GOTCHA: 'capacity' is declared first, so it initializes first.
+    // If the declaration order were inverted, 'buffer' would be allocated
+    // using uninitialized 'capacity' garbage!
+    BufferManager(size_t cap)
+        : capacity(cap), buffer(new char[capacity]) {}
+
+    ~BufferManager() {
+        delete[] buffer;
+    }
+};
+```
+
+Compilers emit warnings (`-Wreorder` in GCC/Clang) when the initialization list order diverges from the declaration order.
+
+## `explicit` Constructors and Implicit Conversions
+
+Single-argument constructors (or multi-argument constructors where all but one argument have defaults) act as implicit converting constructors unless marked `explicit`:
+
+```cpp
+class SocketDescriptor {
+    int fd;
+public:
+    explicit SocketDescriptor(int fd_) : fd(fd_) {}
+    int get() const { return fd; }
+};
+
+void sendData(SocketDescriptor s);
+
+int main() {
+    // sendData(42); // COMPILE ERROR: prevents accidentally passing raw integers
+    sendData(SocketDescriptor(42)); // Explicit and intentional
+}
+```
+
+## Special Member Functions & Rule of Zero / Three / Five
+
+A class that manages a raw system resource (memory, file descriptors, synchronization handles) must explicitly govern its lifetime via the **Rule of Five**:
+
+1. **Destructor**: Releases the acquired resource.
+2. **Copy Constructor**: Performs a deep copy of the resource.
+3. **Copy Assignment**: Safely copies into an existing instance.
+4. **Move Constructor**: Transfers resource ownership without copying.
+5. **Move Assignment**: Transfers ownership and cleans up the overwritten resource.
+
+```cpp
+#include <utility>
+#include <cstddef>
+#include <cstring>
+
+class DynamicString {
+private:
+    char *data;
+    size_t length;
+
+public:
+    // 1. Constructor
+    explicit DynamicString(const char *str = "")
+        : length(strlen(str)), data(new char[length + 1]) {
+        memcpy(data, str, length + 1);
+    }
+
+    // 2. Destructor
+    ~DynamicString() noexcept {
+        delete[] data;
+    }
+
+    // 3. Copy Constructor (Deep Copy)
+    DynamicString(const DynamicString &other)
+        : length(other.length), data(new char[other.length + 1]) {
+        memcpy(data, other.data, length + 1);
+    }
+
+    // 4. Copy Assignment (Copy-and-Swap idiom)
+    DynamicString &operator=(DynamicString other) noexcept {
+        swap(*this, other);
+        return *this;
+    }
+
+    // 5. Move Constructor (Resource Transfer)
+    DynamicString(DynamicString &&other) noexcept
+        : data(other.data), length(other.length) {
+        other.data = nullptr;
+        other.length = 0;
+    }
+
+    friend void swap(DynamicString &first, DynamicString &second) noexcept {
+        using std::swap;
+        swap(first.data, second.data);
+        swap(first.length, second.length);
+    }
+};
+```
+
+### The Rule of Zero
+
+When a class relies strictly on standard RAII wrappers (`std::unique_ptr`, `std::vector`, `std::string`) rather than managing raw pointers directly, it should declare **none** of the five special member functions. The compiler-generated defaults will correctly handle resource ownership.
