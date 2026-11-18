@@ -71,6 +71,10 @@ export default defineConfig({
                   slug: "cpp/fundamentals/classes",
                 },
                 { label: "RAII & Lifetimes", slug: "cpp/fundamentals/raii" },
+                {
+                  label: "Smart Pointers",
+                  slug: "cpp/fundamentals/smart-pointers",
+                },
               ],
             },
             {
@@ -84,7 +88,10 @@ export default defineConfig({
         },
         {
           label: "Roadmaps",
-          items: [{ label: "Learning C", slug: "roadmaps/learning-c" }],
+          items: [
+            { label: "Learning C", slug: "roadmaps/learning-c" },
+            { label: "Modern C++ for Systems", slug: "roadmaps/modern-cpp" },
+          ],
         },
         {
           label: "Libraries",
@@ -92,13 +99,17 @@ export default defineConfig({
         },
         {
           label: "APIs & SDKs",
-          items: [{ label: "POSIX File I/O", slug: "apis/posix-file-io" }],
+          items: [
+            { label: "POSIX File I/O", slug: "apis/posix-file-io" },
+            { label: "POSIX Berkeley Sockets", slug: "apis/posix-sockets" },
+          ],
         },
         {
           label: "Projects",
           items: [
             { label: "CLI Task Manager", slug: "projects/cli-task-manager" },
             { label: "Thread Pool", slug: "projects/thread-pool" },
+            { label: "Arena Allocator", slug: "projects/arena-allocator" },
           ],
         },
         {

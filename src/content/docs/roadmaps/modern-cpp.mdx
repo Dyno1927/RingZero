@@ -1,0 +1,100 @@
+---
+title: Modern C++ for Systems Engineers
+description: A practical roadmap for transitioning from C to Modern C++20, RAII, move semantics, and zero-cost abstractions.
+---
+
+Modern C++ (C++17, C++20, C++23) is a radically different language from early "C with Classes". For systems developers with a strong C background, modern C++ offers memory safety and expressive abstractions without compromising execution speed, memory layout control, or cache locality.
+
+## The Core Paradigm Shift
+
+```text
+C Paradigm                            Modern C++ Paradigm
+──────────────────────────────────────────────────────────────────────
+Manual malloc/free tracking      ──→  RAII & Scoped Smart Pointers
+Error codes / errno checking     ──→  std::expected (C++23) / Result Types
+Void pointers (void*)            ──→  Type-safe Templates & Concepts
+Preprocessor #define macros      ──→  constexpr, consteval, inline variables
+Buffer + Length pointer pairs    ──→  std::string_view & std::span (Non-owning views)
+Raw OS Thread Management         ──→  std::jthread & RAII lock guards
+```
+
+---
+
+## Phase 1: Lifetime Discipline & Smart Pointers
+
+Master modern resource management before touching complex language features:
+
+- **RAII as a Law**: Every raw system resource (sockets, memory, file descriptors, GPU buffers) must be wrapped in a scoped type whose destructor releases the resource deterministically.
+- **Eliminate Raw `new` and `delete`**:
+  - Default to `std::unique_ptr` for exclusive heap ownership.
+  - Use `std::shared_ptr` only when true multi-owner lifecycles are required.
+- **Avoid Shared Pointer Overuse**: A common beginner mistake is replacing every C pointer with `std::shared_ptr`. Shared pointers introduce atomic reference counting overhead and hide unclear ownership architecture.
+
+---
+
+## Phase 2: Move Semantics & Value Semantics
+
+In C, passing large structs requires passing pointers to avoid expensive memory copies. In C++, **Move Semantics** allow transferring ownership of expensive internal buffers in $O(1)$ time without copying:
+
+- **Lvalues vs. Rvalues**: Lvalues have identifiable memory addresses; rvalues are temporaries about to be destroyed.
+- **Rvalue References (`T&&`)**: Bind to temporaries, enabling move constructors and move assignment operators.
+- **`std::move`**: An unconditional cast converting an lvalue to an rvalue, giving permission to transfer its resources.
+
+```cpp
+#include <vector>
+#include <utility>
+
+std::vector<int> createLargeBuffer() {
+    std::vector<int> data(1000000, 42);
+    return data; // NRVO or moved in O(1) time: simply transfers 3 internal pointers!
+}
+```
+
+---
+
+## Phase 3: Zero-Cost Non-Owning Views
+
+In C, taking a slice of an array or substring requires allocating a copy or mutating the original string with null terminators (`\0`). Modern C++ provides non-owning view types:
+
+- **`std::string_view` (C++17)**: A 16-byte struct (`const char *ptr, size_t len`) that views a sequence of characters without heap allocation or copying.
+- **`std::span<T>` (C++20)**: A non-owning contiguous view over any array, buffer, or `std::vector`, providing safe indexed access without ownership transfer.
+
+```cpp
+#include <span>
+#include <iostream>
+
+// Accepts raw C arrays, std::vector, or std::array seamlessly with zero copies
+void processPacket(std::span<const uint8_t> packet) {
+    if (packet.size() < 4) return;
+    std::cout << "Packet size: " << packet.size() << " bytes\n";
+}
+```
+
+---
+
+## Phase 4: Compile-Time Metaprogramming & Concepts
+
+Move computation from runtime to compile time:
+
+- **`constexpr` & `consteval`**: Execute code at compile time. Lookup tables, hash computations, and configuration parsing can run inside the compiler, baking static constants directly into the `.rodata` section.
+- **Concepts (C++20)**: Replace opaque template errors with explicit compile-time interface constraints:
+
+```cpp
+#include <concepts>
+
+template <typename T>
+concept Numeric = std::integral<T> || std::floating_point<T>;
+
+template <Numeric T>
+T clamp(T val, T min, T max) {
+    return (val < min) ? min : (val > max) ? max : val;
+}
+```
+
+---
+
+## Phase 5: Concurrency & Memory Models
+
+- Replace POSIX threads with `std::jthread` (C++20) for automated joins and cooperative stop tokens.
+- Deadlock-free multi-locking with `std::scoped_lock`.
+- Lock-free programming with `std::atomic<T>` and explicit memory ordering (`std::memory_order_acquire`, `std::memory_order_release`).

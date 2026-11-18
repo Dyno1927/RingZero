@@ -1,0 +1,120 @@
+---
+title: Smart Pointers in C++
+description: Exclusive ownership with unique_ptr, reference counting in shared_ptr, control block layouts, and weak_ptr in C++.
+---
+
+Smart pointers in modern C++ (`<memory>`) are class templates that encapsulate raw pointers and govern their destruction through RAII. They automate dynamic memory deallocation, eliminate dangling pointer hazards, and make resource ownership semantics explicit in the type system.
+
+## Ownership Models at a Glance
+
+| Smart Pointer        | Ownership Model                | Overhead vs Raw Pointer                                                   | Move/Copy Semantics      |
+| :------------------- | :----------------------------- | :------------------------------------------------------------------------ | :----------------------- |
+| `std::unique_ptr<T>` | **Exclusive** (Single owner)   | **Zero overhead** (exact same size as `T*`)                               | Move-only (Non-copyable) |
+| `std::shared_ptr<T>` | **Shared** (Reference counted) | **2 pointers** (Pointer to object + pointer to control block)             | Copyable & Moveable      |
+| `std::weak_ptr<T>`   | **Non-owning** observer        | **2 pointers** (Observes control block without incrementing strong count) | Copyable & Moveable      |
+
+## `std::unique_ptr`: Exclusive Ownership
+
+`std::unique_ptr` ensures that exactly one pointer owns the underlying heap allocation. When the `unique_ptr` goes out of scope, it deletes the object automatically.
+
+```cpp
+#include <memory>
+#include <iostream>
+
+struct Packet {
+    int id;
+    Packet(int id_) : id(id_) { std::cout << "Packet " << id << " created\n"; }
+    ~Packet() { std::cout << "Packet " << id << " destroyed\n"; }
+};
+
+int main() {
+    // 1. Creation using std::make_unique (C++14)
+    auto p1 = std::make_unique<Packet>(42);
+
+    // 2. Exclusive ownership: Copying is banned at compile time!
+    // auto p2 = p1; // COMPILER ERROR: call to implicitly-deleted copy constructor
+
+    // 3. Ownership transfer via std::move
+    auto p2 = std::move(p1);
+    // 'p1' is now nullptr; 'p2' owns the Packet
+
+    if (!p1) {
+        std::cout << "p1 is now empty\n";
+    }
+} // Packet 42 is automatically deleted here when p2 exits scope
+```
+
+## `std::shared_ptr`: Reference Counting & Control Blocks
+
+`std::shared_ptr` coordinates multiple owners of a single object. It destroys the managed object when the last owning `shared_ptr` is destroyed or reset.
+
+### Memory Layout & The Control Block
+
+Under the hood, a `std::shared_ptr` stores two 64-bit pointers (16 bytes total):
+
+1. A pointer to the managed object `T`.
+2. A pointer to a heap-allocated **Control Block**.
+
+```text
+std::shared_ptr<T>
+┌──────────────────────┐
+│ Ptr to Object T ─────┼──────────────────────→ ┌────────────────┐
+├──────────────────────┤                        │ Object T       │
+│ Ptr to Control Block ┼────┐                   └────────────────┘
+└──────────────────────┘    │
+                            ▼
+                ┌───────────────────────────────┐
+                │ Control Block                 │
+                │ - Strong Reference Count (2)  │ (Atomic uint32_t)
+                │ - Weak Reference Count (1)    │ (Atomic uint32_t)
+                │ - Custom Deleter (if provided)│
+                │ - Custom Allocator (if used)  │
+                └───────────────────────────────┘
+```
+
+### `std::make_shared` Optimization
+
+Always prefer `std::make_shared<T>()` over `std::shared_ptr<T>(new T())`:
+
+- **`new T()` with `shared_ptr`**: Performs **two separate heap allocations** (one for `T`, another for the control block).
+- **`std::make_shared`**: Performs a **single contiguous heap allocation** storing both the object `T` and the control block together, cutting allocation overhead in half and dramatically improving CPU cache locality.
+
+```cpp
+// ANTI-PATTERN: Two separate heap allocations + exception safety hole
+std::shared_ptr<Packet> p1(new Packet(1));
+
+// IDIOMATIC: Single contiguous allocation
+auto p2 = std::make_shared<Packet>(2);
+```
+
+### Thread Safety Invariants of `std::shared_ptr`
+
+- **Reference Count Operations are Atomic**: Multiple threads can copy or destroy different `std::shared_ptr` instances pointing to the same object concurrently without data races on the reference count.
+- **The Pointed-To Object is NOT Synchronized**: If multiple threads mutate the underlying object `T` through shared pointers, you **must** synchronize access with a mutex.
+
+## `std::weak_ptr`: Breaking Circular References
+
+When two objects hold `std::shared_ptr` references to each other, a **cyclic reference** occurs. The strong reference counts never drop to zero, permanently leaking both objects:
+
+```cpp
+#include <memory>
+
+struct Node {
+    // BUG: If this were std::shared_ptr<Node>, a cycle would leak memory!
+    std::weak_ptr<Node> neighbor;
+    ~Node() { /* Cleaned up properly */ }
+};
+
+int main() {
+    auto a = std::make_shared<Node>();
+    auto b = std::make_shared<Node>();
+
+    a->neighbor = b; // Weak reference: does NOT increment strong count
+    b->neighbor = a;
+
+    // To use a weak_ptr, temporarily promote it to a shared_ptr via lock()
+    if (auto shared_neighbor = a->neighbor.lock()) {
+        // Safe to use shared_neighbor
+    }
+}
+```

@@ -1,0 +1,171 @@
+---
+title: POSIX Berkeley Sockets
+description: Low-level network programming, TCP socket lifecycles, sockaddr structures, and non-blocking I/O in C.
+---
+
+POSIX Berkeley Sockets provide the standardized system call interface for network communication across Unix-like operating systems. In Unix, network sockets are represented as **file descriptors** (`int`), enabling unified I/O through `read()`, `write()`, and socket-specific primitives (`recv()`, `send()`).
+
+## Headers & Core Types
+
+```c
+#include <sys/socket.h> // socket, bind, listen, accept, setsockopt
+#include <netinet/in.h> // struct sockaddr_in, IPPROTO_TCP, INADDR_ANY
+#include <arpa/inet.h>  // htons, ntohs, inet_pton, inet_ntop
+#include <unistd.h>     // close
+```
+
+## The TCP Server Lifecycle
+
+A reliable connection-oriented TCP server follows a strict 6-stage system call sequence:
+
+```text
+1. socket()     ──→ Creates an unbound network endpoint (allocates socket fd)
+       ↓
+2. setsockopt() ──→ Configures socket level options (SO_REUSEADDR)
+       ↓
+3. bind()       ──→ Binds socket fd to an IP address and Port number
+       ↓
+4. listen()     ──→ Marks socket as passive, listening for incoming connections
+       ↓
+5. accept()     ──→ Blocks until a client completes 3-way handshake;
+                    returns a NEW connected socket fd for data transfer
+       ↓
+6. recv()/send()──→ Reads/writes payload streams over the connection
+       ↓
+7. close()      ──→ Initiates TCP FIN teardown and frees kernel socket buffers
+```
+
+## Address Structures & Byte Ordering
+
+### Network Byte Order (Big Endian)
+
+Internet protocols mandate **Big Endian** byte order (most significant byte at the lowest address). Because x86-64 and ARM CPUs are natively **Little Endian**, numerical values like port numbers must be converted:
+
+- `htons()`: Host to Network Short (16-bit, for ports)
+- `ntohs()`: Network to Host Short
+- `htonl()`: Host to Network Long (32-bit, for IPv4 addresses)
+- `ntohl()`: Network to Host Long
+
+### The `sockaddr_in` Structure
+
+```c
+struct sockaddr_in {
+    sa_family_t    sin_family; // Address family: AF_INET (IPv4)
+    in_port_t      sin_port;   // Port in network byte order: htons(8080)
+    struct in_addr sin_addr;   // 32-bit IPv4 address: in_addr_t
+    char           sin_zero[8];// Padding to match sizeof(struct sockaddr)
+};
+```
+
+## The `SO_REUSEADDR` Imperative
+
+When a TCP server process terminates, the OS kernel retains the bound port in the `TIME_WAIT` state for 1–2 minutes to ensure delayed packets are dropped cleanly. Restarting the server immediately results in `bind: Address already in use` (`EADDRINUSE`).
+
+Setting `SO_REUSEADDR` allows the kernel to rebind the port immediately upon restart:
+
+```c
+int opt = 1;
+if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    perror("setsockopt SO_REUSEADDR failed");
+    close(server_fd);
+    return -1;
+}
+```
+
+## Complete Idiomatic TCP Echo Server
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#define PORT 8080
+#define BACKLOG 128
+#define BUFFER_SIZE 4096
+
+int main(void) {
+    // 1. Create IPv4 TCP socket (AF_INET, SOCK_STREAM, 0 for default TCP)
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket creation failed");
+        return 1;
+    }
+
+    // 2. Enable port reuse
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    // 3. Bind to 0.0.0.0:8080
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY; // Bind to all local network interfaces
+    address.sin_port = htons(PORT);
+
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        close(server_fd);
+        return 1;
+    }
+
+    // 4. Mark socket as listening
+    if (listen(server_fd, BACKLOG) < 0) {
+        perror("listen failed");
+        close(server_fd);
+        return 1;
+    }
+
+    printf("TCP Echo Server listening on port %d...\n", PORT);
+
+    for (;;) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+
+        // 5. Accept next client connection
+        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd < 0) {
+            if (errno == EINTR) continue; // Interrupted by signal
+            perror("accept error");
+            break;
+        }
+
+        // 6. Echo loop
+        char buffer[BUFFER_SIZE];
+        ssize_t bytes_received;
+
+        while ((bytes_received = recv(client_fd, buffer, sizeof(buffer), 0)) > 0) {
+            ssize_t bytes_sent = 0;
+            while (bytes_sent < bytes_received) {
+                ssize_t n = send(client_fd, buffer + bytes_sent, bytes_received - bytes_sent, 0);
+                if (n < 0) {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                bytes_sent += n;
+            }
+        }
+
+        // 7. Close client connection
+        close(client_fd);
+    }
+
+    close(server_fd);
+    return 0;
+}
+```
+
+## Non-Blocking I/O via `fcntl`
+
+By default, `accept()`, `recv()`, and `send()` block the calling thread until network data arrives. To enable event-driven architectures with `epoll` or `select`, flip the file descriptor to non-blocking mode:
+
+```c
+#include <fcntl.h>
+
+int flags = fcntl(fd, F_GETFL, 0);
+fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+```
+
+When non-blocking, a read on an empty socket returns immediately with `-1` and `errno == EAGAIN` (or `EWOULDBLOCK`), allowing a single thread to multiplex thousands of active network connections.

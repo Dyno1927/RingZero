@@ -1,0 +1,275 @@
+---
+title: Arena Memory Allocator
+description: Build a high-performance region-based bump memory allocator with alignment guarantees in C.
+---
+
+import { Badge } from "@astrojs/starlight/components";
+import ReferenceSolution from "../../../components/ReferenceSolution.astro";
+
+<div class="proj-tags">
+  <Badge text="Advanced" variant="danger" />
+  <Badge text="C" variant="note" />
+</div>
+
+## 1. Overview & Objective
+
+Build an **Arena Allocator** (also known as a region-based or bump allocator) in pure C. General-purpose allocators (`malloc`/`free`) suffer from heap fragmentation, lock contention, and metadata overhead when servicing thousands of small allocations. An arena pre-allocates a large contiguous block of memory and satisfies allocations in $O(1)$ time by advancing an offset pointer ("bumping the pointer"). The entire arena is released or reset all at once in $O(1)$ time, eliminating per-object `free()` overhead and Use-After-Free hazards.
+
+## 2. Prerequisites & Concepts
+
+- **Virtual Memory & Alignment**: Understanding `max_align_t`, power-of-two alignment masks, and padding formulas.
+- **Pointer Arithmetic**: Manipulating raw byte buffers (`uint8_t*`) and pointer-to-integer conversions (`uintptr_t`).
+- **Dynamic Chunk Chaining**: Dynamically allocating additional backing blocks when an arena's capacity is exhausted.
+
+## 3. System Architecture
+
+```text
+Arena Structure
+┌────────────────────────────────────────────────────────┐
+│ Chunk 1 (Capacity: 64 KB)                             │
+│ ┌──────────────┬──────────────┬──────────────┬───────┐ │
+│ │ Alloc 1 (4B) │ Alloc 2 (8B) │ Alloc 3 (64B)│ Free  │ │
+│ └──────────────┴──────────────┴──────────────┴───────┘ │
+│                                              ▲         │
+│                                         Offset Pointer │
+└──────────────────────────┬─────────────────────────────┘
+                           │ Next Chunk Pointer
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ Chunk 2 (Allocated dynamically if Chunk 1 fills up)    │
+└────────────────────────────────────────────────────────┘
+```
+
+## 4. Scope & Requirements
+
+### Functional Requirements
+
+- `arena_create(size_t chunk_size)`: Initializes the arena with an initial memory chunk.
+- `arena_alloc(arena, size_t size, size_t alignment)`: Allocates `size` bytes aligned to `alignment` bytes (must be a power of 2). Advances the chunk offset. Chunks link dynamically if capacity is exceeded.
+- `arena_reset(arena)`: Resets all chunk offsets to zero without freeing the underlying OS memory, allowing instantaneous reuse.
+- `arena_destroy(arena)`: Frees all allocated memory chunks back to the system.
+
+### Non-Requirements
+
+- No per-allocation `free()`: Individual sub-allocations cannot be freed independently (this is the defining design tradeoff of arenas).
+
+## 5. Interface & Data Structures
+
+```c
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct ArenaChunk {
+    struct ArenaChunk *next;
+    size_t capacity;
+    size_t offset;
+    uint8_t data[]; // Flexible Array Member
+} ArenaChunk;
+
+typedef struct Arena {
+    ArenaChunk *current;
+    ArenaChunk *first;
+    size_t default_chunk_size;
+} Arena;
+
+Arena *arena_create(size_t default_chunk_size);
+void  *arena_alloc(Arena *arena, size_t size, size_t alignment);
+void   arena_reset(Arena *arena);
+void   arena_destroy(Arena *arena);
+```
+
+## 6. Implementation Stages
+
+1. **Stage 1 (Chunk Allocation & Flexible Array Member)**: Create chunks using a single `malloc(sizeof(ArenaChunk) + chunk_size)`.
+2. **Stage 2 (Alignment Arithmetic)**: Implement the power-of-two forward alignment bitwise formula:
+   ```c
+   aligned_addr = (current_addr + (alignment - 1)) & ~(alignment - 1);
+   ```
+3. **Stage 3 (Bump Allocation Logic)**: Compute aligned offset, verify bounds, and advance chunk offset.
+4. **Stage 4 (Dynamic Chunk Growth)**: If an allocation exceeds the current chunk's remaining space, allocate a new chunk and link it to the list.
+5. **Stage 5 (O(1) Reset & Teardown)**: Reset offsets to reuse chunks without reallocating; teardown frees the entire chain.
+
+## 7. Edge Cases & Alignment Hazards
+
+- **Non-Power-of-Two Alignments**: The bitwise mask formula `~(alignment - 1)` is only valid when `alignment` is a power of 2 ($1, 2, 4, 8, 16, 32$). The allocator must reject or assert on non-power-of-two inputs.
+- **Oversized Allocations**: If an allocation request exceeds `default_chunk_size`, allocate a custom chunk sized exactly to fit that single request.
+
+## 8. Memory Safety & Concurrency Invariants
+
+- Arenas are typically **single-threaded per-worker/per-frame** structures (e.g., game loop frame arenas or HTTP request arenas). This avoids all mutex contention. If shared across threads, synchronize via a mutex or maintain per-thread arenas.
+
+## 9. Build & Compilation Instructions
+
+```bash
+clang -std=c17 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -g main.c -o arena_test
+```
+
+## 10. Verification & Test Plan
+
+1. **Alignment Verification**: Allocate varying sizes (`char`, `int`, `double`, SIMD `16-byte` vectors) and assert `(uintptr_t)ptr % alignment == 0`.
+2. **Growth Test**: Request allocations totaling $10 \times$ the default chunk size; verify linked chunk creation.
+3. **Reset Verification**: Reset the arena and verify subsequent allocations reuse the first chunk without increasing heap usage.
+
+## 11. Performance Comparison: Arena vs. `malloc`
+
+| Metric                   | `malloc` / `free`                    | Arena Allocator                         |
+| :----------------------- | :----------------------------------- | :-------------------------------------- |
+| **Allocation Latency**   | 50–250 CPU cycles (bin search, lock) | **2–5 CPU cycles** (add & bitwise AND)  |
+| **Deallocation Latency** | 50–150 CPU cycles per object         | **$O(1)$ for millions of objects**      |
+| **Metadata Overhead**    | 8–16 bytes per allocation            | **0 bytes per allocation**              |
+| **Cache Locality**       | Random heap locations                | **Dense contiguous cache line packing** |
+
+## 12. Reference Implementation
+
+<ReferenceSolution title="arena.c (Complete Reference Solution)" badge="Reveal Code">
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <assert.h>
+
+typedef struct ArenaChunk {
+    struct ArenaChunk *next;
+    size_t capacity;
+    size_t offset;
+    uint8_t data[]; // Flexible Array Member for payload
+} ArenaChunk;
+
+typedef struct Arena {
+    ArenaChunk *first;
+    ArenaChunk *current;
+    size_t default_chunk_size;
+} Arena;
+
+static ArenaChunk *arena_chunk_create(size_t capacity) {
+    ArenaChunk *chunk = malloc(sizeof(ArenaChunk) + capacity);
+    if (!chunk) return NULL;
+
+    chunk->next = NULL;
+    chunk->capacity = capacity;
+    chunk->offset = 0;
+    return chunk;
+}
+
+Arena *arena_create(size_t default_chunk_size) {
+    if (default_chunk_size == 0) default_chunk_size = 64 * 1024; // 64 KB default
+
+    Arena *arena = malloc(sizeof(Arena));
+    if (!arena) return NULL;
+
+    arena->default_chunk_size = default_chunk_size;
+    arena->first = arena_chunk_create(default_chunk_size);
+    if (!arena->first) {
+        free(arena);
+        return NULL;
+    }
+    arena->current = arena->first;
+    return arena;
+}
+
+static inline uintptr_t align_forward(uintptr_t ptr, size_t alignment) {
+    assert((alignment & (alignment - 1)) == 0 && "Alignment must be a power of 2");
+    return (ptr + (alignment - 1)) & ~(alignment - 1);
+}
+
+void *arena_alloc(Arena *arena, size_t size, size_t alignment) {
+    if (!arena || size == 0) return NULL;
+    if (alignment == 0) alignment = _Alignof(max_align_t);
+
+    ArenaChunk *chunk = arena->current;
+
+    // Calculate current address and aligned address
+    uintptr_t current_addr = (uintptr_t)&chunk->data[chunk->offset];
+    uintptr_t aligned_addr = align_forward(current_addr, alignment);
+    size_t padding = aligned_addr - current_addr;
+
+    // Check if allocation fits in the current chunk
+    if (chunk->offset + padding + size <= chunk->capacity) {
+        chunk->offset += padding + size;
+        return (void *)aligned_addr;
+    }
+
+    // Allocation does not fit; check if an already allocated next chunk exists (from a prior reset)
+    if (chunk->next && chunk->next->capacity >= size) {
+        arena->current = chunk->next;
+        chunk = arena->current;
+        chunk->offset = 0;
+
+        current_addr = (uintptr_t)&chunk->data[0];
+        aligned_addr = align_forward(current_addr, alignment);
+        padding = aligned_addr - current_addr;
+
+        chunk->offset = padding + size;
+        return (void *)aligned_addr;
+    }
+
+    // Allocate a new chunk (handle oversized allocations gracefully)
+    size_t new_capacity = arena->default_chunk_size;
+    if (size + alignment > new_capacity) {
+        new_capacity = size + alignment;
+    }
+
+    ArenaChunk *new_chunk = arena_chunk_create(new_capacity);
+    if (!new_chunk) return NULL;
+
+    chunk->next = new_chunk;
+    arena->current = new_chunk;
+
+    current_addr = (uintptr_t)&new_chunk->data[0];
+    aligned_addr = align_forward(current_addr, alignment);
+    padding = aligned_addr - current_addr;
+
+    new_chunk->offset = padding + size;
+    return (void *)aligned_addr;
+}
+
+void arena_reset(Arena *arena) {
+    if (!arena) return;
+    // Reset offsets without freeing chunks to reuse memory in O(1)
+    for (ArenaChunk *chunk = arena->first; chunk != NULL; chunk = chunk->next) {
+        chunk->offset = 0;
+    }
+    arena->current = arena->first;
+}
+
+void arena_destroy(Arena *arena) {
+    if (!arena) return;
+
+    ArenaChunk *chunk = arena->first;
+    while (chunk) {
+        ArenaChunk *next = chunk->next;
+        free(chunk);
+        chunk = next;
+    }
+    free(arena);
+}
+
+int main(void) {
+    Arena *arena = arena_create(4096);
+    assert(arena != NULL);
+
+    // Test 1: Multiple aligned allocations
+    int *numbers = arena_alloc(arena, 100 * sizeof(int), _Alignof(int));
+    assert(((uintptr_t)numbers % _Alignof(int)) == 0);
+    for (int i = 0; i < 100; i++) numbers[i] = i * 2;
+
+    double *decimals = arena_alloc(arena, 50 * sizeof(double), _Alignof(double));
+    assert(((uintptr_t)decimals % _Alignof(double)) == 0);
+
+    // Test 2: Instant O(1) reset
+    arena_reset(arena);
+
+    // Test 3: Reuse memory post-reset
+    char *buffer = arena_alloc(arena, 1024, 1);
+    assert(buffer != NULL);
+
+    arena_destroy(arena);
+    printf("All arena allocator tests passed successfully.\n");
+    return 0;
+}
+```
+
+</ReferenceSolution>
