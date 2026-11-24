@@ -1,0 +1,188 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 800 800"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Ring 0 documentation map</title>
+  <desc id="description">
+    Available C and C++ references connect to memory and lifetimes, concurrency,
+    POSIX and Linux interfaces, and buildable projects.
+  </desc>
+  <rect
+    x="1"
+    y="1"
+    width="798"
+    height="798"
+    rx="24"
+    fill="#16181b"
+    stroke="#3a3f44"
+    stroke-width="2"
+  />
+
+  <g
+    fill="#8f8d86"
+    font-family="'IBM Plex Mono', monospace"
+    font-size="14"
+    letter-spacing="2"
+  >
+    <text x="52" y="66">RING 0 / FIELD GUIDE</text>
+    <text x="748" y="66" text-anchor="end">AVAILABLE NOW</text>
+  </g>
+
+  <text
+    x="52"
+    y="132"
+    fill="#e9e7e1"
+    font-family="'IBM Plex Sans', sans-serif"
+    font-size="30"
+    font-weight="600"
+  >
+    Start with a language.
+  </text>
+  <text
+    x="52"
+    y="163"
+    fill="#8f8d86"
+    font-family="'IBM Plex Sans', sans-serif"
+    font-size="17"
+  >
+    Follow the concepts into the system.
+  </text>
+
+  <g
+    font-family="'IBM Plex Mono', monospace"
+    font-size="19"
+    font-weight="500"
+    text-anchor="middle"
+  >
+    <rect
+      x="52"
+      y="202"
+      width="146"
+      height="64"
+      rx="10"
+      fill="#122621"
+      stroke="#4fa98a"
+      stroke-width="2"
+    />
+    <text x="125" y="242" fill="#7fd6b8">C</text>
+    <rect
+      x="214"
+      y="202"
+      width="146"
+      height="64"
+      rx="10"
+      fill="#122621"
+      stroke="#4fa98a"
+      stroke-width="2"
+    />
+    <text x="287" y="242" fill="#7fd6b8">C++</text>
+  </g>
+
+  <path
+    d="M 206 266 V 322 M 132 322 H 668 M 132 322 V 356 M 400 322 V 356 M 668 322 V 356"
+    fill="none"
+    stroke="#4fa98a"
+    stroke-width="2"
+    stroke-linecap="round"
+  />
+  <circle cx="206" cy="322" r="5" fill="#7fd6b8" />
+
+  <g font-family="'IBM Plex Sans', sans-serif">
+    <g>
+      <rect
+        x="52"
+        y="356"
+        width="248"
+        height="126"
+        rx="12"
+        fill="#1e2124"
+        stroke="#3a3f44"
+      />
+      <path d="M 52 380 H 300" stroke="#4fa98a" stroke-width="3" />
+      <text x="76" y="416" fill="#e9e7e1" font-size="20" font-weight="600">
+        Memory &amp; lifetimes
+      </text>
+      <text x="76" y="450" fill="#8f8d86" font-size="15">
+        Allocation, ownership, safety
+      </text>
+    </g>
+    <g>
+      <rect
+        x="328"
+        y="356"
+        width="196"
+        height="126"
+        rx="12"
+        fill="#1e2124"
+        stroke="#3a3f44"
+      />
+      <path d="M 328 380 H 524" stroke="#4fa98a" stroke-width="3" />
+      <text x="352" y="416" fill="#e9e7e1" font-size="20" font-weight="600">
+        Concurrency
+      </text>
+      <text x="352" y="450" fill="#8f8d86" font-size="15">
+        Threads, atomics
+      </text>
+    </g>
+    <g>
+      <rect
+        x="552"
+        y="356"
+        width="196"
+        height="126"
+        rx="12"
+        fill="#1e2124"
+        stroke="#3a3f44"
+      />
+      <path d="M 552 380 H 748" stroke="#4fa98a" stroke-width="3" />
+      <text x="576" y="416" fill="#e9e7e1" font-size="20" font-weight="600">
+        OS interfaces
+      </text>
+      <text x="576" y="450" fill="#8f8d86" font-size="15">POSIX, Linux</text>
+    </g>
+  </g>
+
+  <path d="M 52 526 H 748" stroke="#3a3f44" />
+  <text
+    x="52"
+    y="566"
+    fill="#8f8d86"
+    font-family="'IBM Plex Mono', monospace"
+    font-size="13"
+    letter-spacing="1.6"
+  >
+    LEARN BY BUILDING
+  </text>
+  <text
+    x="52"
+    y="614"
+    fill="#e9e7e1"
+    font-family="'IBM Plex Sans', sans-serif"
+    font-size="22"
+    font-weight="600"
+  >
+    Practical projects with buildable stages
+  </text>
+  <path d="M 52 650 H 748" stroke="#3a3f44" />
+  <text
+    x="52"
+    y="704"
+    fill="#7fd6b8"
+    font-family="'IBM Plex Mono', monospace"
+    font-size="15"
+  >
+    ROADMAPS
+  </text>
+  <text
+    x="748"
+    y="704"
+    fill="#8f8d86"
+    font-family="'IBM Plex Sans', sans-serif"
+    font-size="15"
+    text-anchor="end"
+  >
+    Or jump straight to a reference →
+  </text>
+</svg>

@@ -10,7 +10,7 @@ const { title = "Reference Implementation", badge = "Reveal" } = Astro.props;
 <details class="solution-box">
   <summary class="solution-head">
     <span class="left">
-      <span class="lock-icon">🔒</span>
+      <span class="lock-icon" aria-hidden="true">▣</span>
       <span class="title">{title}</span>
     </span>
     <span class="reveal-btn">{badge}</span>
@@ -56,6 +56,12 @@ const { title = "Reference Implementation", badge = "Reveal" } = Astro.props;
     align-items: center;
     gap: 9px;
     color: var(--sl-color-white);
+  }
+
+  .lock-icon {
+    color: var(--sl-color-accent);
+    font-family: var(--sl-font-mono);
+    font-size: 0.9em;
   }
 
   .solution-head .reveal-btn {

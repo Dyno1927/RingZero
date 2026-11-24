@@ -3,20 +3,42 @@ import starlight from "@astrojs/starlight";
 
 // https://astro.build/config
 export default defineConfig({
+  ...(process.env.SITE_URL ? { site: process.env.SITE_URL } : {}),
   output: "static",
   integrations: [
     starlight({
       title: "Ring 0",
       description:
         "Systems programming, explained from the metal up. C and C++ internals, memory, and OS interfaces.",
-      social: {
-        github: "https://github.com/Dyno1927/Ring0",
-      },
+      favicon: "/favicon.svg",
+      disable404Route: true,
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/Dyno1927/Ring0",
+        },
+      ],
       customCss: ["./src/styles/custom.css"],
+      pagination: true,
+      expressiveCode: {
+        themes: ["github-dark", "github-light"],
+        defaultProps: {
+          wrap: false,
+        },
+      },
       components: {
         ThemeSelect: "./src/components/ThemeSelect.astro",
       },
       sidebar: [
+        {
+          label: "Start here",
+          items: [
+            { label: "Ring 0 overview", slug: "" },
+            { label: "Learning C", slug: "roadmaps/learning-c" },
+            { label: "Modern C++ for Systems", slug: "roadmaps/modern-cpp" },
+          ],
+        },
         {
           label: "C",
           collapsed: true,

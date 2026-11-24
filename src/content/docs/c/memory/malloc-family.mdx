@@ -130,3 +130,9 @@ When a program writes before the start of its buffer (heap underflow) or past it
 
 - **Internal Fragmentation**: Occurs when the allocator rounds up the requested size to satisfy alignment or minimum chunk constraints (e.g., requesting 5 bytes receives a 24-byte chunk).
 - **External Fragmentation**: Occurs when free memory is broken into many small, non-contiguous slices. Total free memory may be 50 MB, but an allocation request for 4 MB fails because no single contiguous 4 MB block exists.
+
+## Continue learning
+
+- [Pointers in C](/c/fundamentals/pointers/) — review pointer arithmetic and object lifetime.
+- [Dangling Pointers and Use-After-Free](/c/memory/dangling-pointers/) — examine invalid access after deallocation.
+- [Arena Memory Allocator](/projects/arena-allocator/) — apply allocation and lifetime concepts in a project.

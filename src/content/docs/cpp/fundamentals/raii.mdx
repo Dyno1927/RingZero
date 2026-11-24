@@ -153,3 +153,9 @@ RAII is the bedrock of C++ exception safety guarantees:
 :::caution[Destructors Must Never Throw (`noexcept`)]
 In C++11 and later, all destructors are implicitly `noexcept`. If a destructor throws during stack unwinding (when an exception is already in flight), `std::terminate` is immediately called, crashing the process without clean shutdown. Always swallow or log errors within destructors.
 :::
+
+## Continue learning
+
+- [Smart Pointers in C++](/cpp/fundamentals/smart-pointers/) — use standard ownership types built on RAII.
+- [Classes in C++](/cpp/fundamentals/classes/) — connect object construction and destruction to class design.
+- [Threads and Mutexes in C++](/cpp/concurrency/threads/) — apply scoped ownership to synchronization.

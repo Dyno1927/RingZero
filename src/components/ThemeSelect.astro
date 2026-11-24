@@ -5,8 +5,8 @@
   <button
     type="button"
     class="theme-toggle-btn"
-    aria-label="Toggle theme"
-    title="Toggle dark / light theme"
+    aria-label="Change color theme"
+    title="Change color theme"
   >
     <span class="theme-icon-wrapper" aria-hidden="true">
       <svg
@@ -46,7 +46,7 @@
         <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
       </svg>
     </span>
-    <span class="theme-label">dark</span>
+    <span class="theme-label">system</span>
   </button>
 </theme-toggle>
 
@@ -57,41 +57,75 @@
       const button = this.querySelector("button");
       if (!button) return;
 
-      const updateUI = () => {
-        const isDark = document.documentElement.dataset.theme === "dark";
-        const label = this.querySelector(".theme-label");
-        if (label) {
-          label.textContent = isDark ? "dark" : "light";
+      const readPreference = (key) => {
+        try {
+          return localStorage.getItem(key);
+        } catch {
+          return null;
         }
-        button.setAttribute(
-          "aria-label",
-          `Switch to ${isDark ? "light" : "dark"} mode`
-        );
+      };
+      const savePreference = (key, value) => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {
+          // The active page theme still works when persistent storage is unavailable.
+        }
+      };
+      const getPreference = () => {
+        const saved = readPreference("ring0-theme");
+        if (saved === "dark" || saved === "light" || saved === "system") return saved;
+        const legacy = readPreference("starlight-theme");
+        if (legacy === "dark" || legacy === "light") return legacy;
+        const activePreference = document.documentElement.dataset.themePreference;
+        return activePreference === "dark" || activePreference === "light"
+          ? activePreference
+          : "system";
+      };
+      const getSystemTheme = () =>
+        window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const applyTheme = (preference) => {
+        const resolvedTheme = preference === "system" ? getSystemTheme() : preference;
+        document.documentElement.dataset.theme = resolvedTheme;
+        document.documentElement.dataset.themePreference = preference;
+      };
+      const updateUI = () => {
+        const preference = getPreference();
+        const label = this.querySelector(".theme-label");
+        if (label) label.textContent = preference;
+        button.setAttribute("aria-label", `Color theme: ${preference}. Activate to change.`);
+        button.title = `Color theme: ${preference}`;
+        document.querySelectorAll("theme-toggle .theme-label").forEach((item) => {
+          item.textContent = preference;
+        });
+        document.querySelectorAll("theme-toggle button").forEach((item) => {
+          item.setAttribute("aria-label", `Color theme: ${preference}. Activate to change.`);
+          item.title = `Color theme: ${preference}`;
+        });
       };
 
+      const preference = getPreference();
+      applyTheme(preference);
       updateUI();
 
       button.addEventListener("click", () => {
-        const currentTheme = document.documentElement.dataset.theme || "dark";
-        const nextTheme = currentTheme === "dark" ? "light" : "dark";
-        document.documentElement.dataset.theme = nextTheme;
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("starlight-theme", nextTheme);
-        }
-
-        document.querySelectorAll("theme-toggle").forEach((el) => {
-          const l = el.querySelector(".theme-label");
-          if (l) l.textContent = nextTheme;
-          const b = el.querySelector("button");
-          if (b)
-            b.setAttribute(
-              "aria-label",
-              `Switch to ${nextTheme === "dark" ? "light" : "dark"} mode`
-            );
-        });
+        const current = getPreference();
+        const next = current === "system" ? "dark" : current === "dark" ? "light" : "system";
+        savePreference("ring0-theme", next);
+        savePreference("starlight-theme", next === "system" ? "" : next);
+        applyTheme(next);
+        updateUI();
       });
 
-      const observer = new MutationObserver(() => updateUI());
+      const systemPreference = window.matchMedia("(prefers-color-scheme: dark)");
+      systemPreference.addEventListener?.("change", () => {
+        if (getPreference() === "system") {
+          applyTheme("system");
+          updateUI();
+        }
+      });
+
+      /* Starlight can update the theme during client navigation. Keep the label honest. */
+      const observer = new MutationObserver(updateUI);
       observer.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["data-theme"],

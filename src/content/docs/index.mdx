@@ -1,9 +1,13 @@
 ---
-title: "Ring 0"
-description: Systems programming, explained from the metal up.
+title: Systems Programming Documentation
+description: Practical systems programming documentation for C and C++, covering language fundamentals, memory management, concurrency, POSIX and Linux APIs, libraries, and buildable projects.
 template: splash
 hero:
-  tagline: Systems programming, explained from the metal up. C and C++ internals, memory and the toolchain, OS and hardware interfaces — with buildable projects and hidden reference solutions.
+  tagline: Systems programming, explained from the metal up. Explore C and C++ internals, memory, concurrency, POSIX and Linux interfaces, and buildable projects with reference solutions.
+  image:
+    dark: ../../assets/Documentation-Map-Dark.svg
+    light: ../../assets/Documentation-Map-Light.svg
+    alt: Map of the available C and C++ guides, systems topics, and practical projects.
   actions:
     - text: Start with C
       link: /c/fundamentals/variables-and-types/
@@ -41,3 +45,36 @@ import { LinkCard, CardGrid } from "@astrojs/starlight/components";
     href="/projects/cli-task-manager/"
   />
 </CardGrid>
+
+<div class="homepage-index">
+
+## Find your way in
+
+<div class="homepage-index-grid">
+  <a href="/c/fundamentals/variables-and-types/">
+    <span>C language</span>
+    <span>fundamentals →</span>
+  </a>
+  <a href="/cpp/fundamentals/c-to-cpp/">
+    <span>C++ language</span>
+    <span>from C →</span>
+  </a>
+  <a href="/c/memory/malloc-family/">
+    <span>Memory</span>
+    <span>allocation and lifetime →</span>
+  </a>
+  <a href="/apis/posix-file-io/">
+    <span>OS interfaces</span>
+    <span>POSIX and Linux →</span>
+  </a>
+  <a href="/projects/cli-task-manager/">
+    <span>Build a project</span>
+    <span>start with taskcli →</span>
+  </a>
+  <a href="/planned/">
+    <span>Architecture roadmap</span>
+    <span>available and planned →</span>
+  </a>
+</div>
+
+</div>

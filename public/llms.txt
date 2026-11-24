@@ -1,0 +1,65 @@
+# Ring 0
+
+> Systems programming, explained from the metal up.
+
+Ring 0 is a static technical documentation platform focused on C and C++ systems programming, memory, operating-system interfaces, libraries, and buildable projects.
+
+## Available documentation
+
+### C
+
+- [Variables and Types](/c/fundamentals/variables-and-types/): Memory representation, integer types, and variable lifetimes.
+- [Operators and Expressions](/c/fundamentals/operators-and-expressions/): Arithmetic, bitwise operations, sequencing, and undefined behavior.
+- [Control Flow and Loops](/c/fundamentals/control-flow/): Branching, loops, and cleanup patterns.
+- [Functions and Linkage](/c/fundamentals/functions/): Calling conventions, stack frames, and symbol visibility.
+- [Pointers](/c/fundamentals/pointers/): Pointer arithmetic, aliasing, qualifiers, and undefined behavior boundaries.
+- [Arrays](/c/fundamentals/arrays/): Contiguous layout, pointer decay, multidimensional arrays, and bounds.
+- [Strings](/c/fundamentals/strings/): Null-terminated strings and standard library usage.
+- [Structures](/c/fundamentals/structures/): Alignment, padding, and flexible array members.
+- [Enums and Unions](/c/fundamentals/enums-and-unions/): Representations and tagged unions.
+- [Preprocessor and Macros](/c/fundamentals/preprocessor-and-macros/): Includes, macro expansion, conditional compilation, and pitfalls.
+- [The malloc Family](/c/memory/malloc-family/): Allocation APIs, allocator internals, and fragmentation.
+- [Dangling Pointers and Use-After-Free](/c/memory/dangling-pointers/): Lifetime errors, exploitation mechanics, and sanitizers.
+
+### C++
+
+- [Moving from C to C++](/cpp/fundamentals/c-to-cpp/): Namespaces, references, overloads, and `nullptr`.
+- [Classes and Objects](/cpp/fundamentals/classes/): Object layout, construction, and special member functions.
+- [RAII and Lifetimes](/cpp/fundamentals/raii/): Resource ownership, deterministic destruction, and exception safety.
+- [Smart Pointers](/cpp/fundamentals/smart-pointers/): Exclusive and shared ownership with standard smart pointers.
+- [Templates and Metaprogramming](/cpp/fundamentals/templates/): Generic programming, type traits, and C++20 concepts.
+- [Threads and Mutexes](/cpp/concurrency/threads/): Thread lifecycles, synchronization, and data races.
+- [Atomics and Memory Models](/cpp/concurrency/atomics/): Atomic operations and memory ordering.
+
+### Roadmaps
+
+- [Learning C](/roadmaps/learning-c/): A systems-first path through C, toolchains, sanitizers, and OS interfaces.
+- [Modern C++ for Systems Engineers](/roadmaps/modern-cpp/): A path from C to modern C++ ownership and concurrency.
+
+### Libraries
+
+- [libcurl](/libraries/libcurl/): Handle lifecycle, callbacks, thread safety, and memory management.
+- [zlib](/libraries/zlib/): One-shot and streaming compression APIs.
+
+### Operating System APIs
+
+- [POSIX File I/O](/apis/posix-file-io/): File descriptors, partial transfers, and interrupted calls.
+- [POSIX Sockets](/apis/posix-sockets/): TCP lifecycle and non-blocking sockets.
+- [Linux epoll](/apis/epoll/): Event-driven I/O and edge/level triggering.
+
+### Projects
+
+- [Command-Line Task Manager](/projects/cli-task-manager/): Persistent binary-backed task records in C.
+- [Thread Pool](/projects/thread-pool/): Bounded task queue and POSIX worker lifecycle.
+- [Arena Allocator](/projects/arena-allocator/): Region-based allocation with alignment and chunk growth.
+
+## Editorial principles
+
+- Technical accuracy and depth take priority over page count.
+- Undefined behavior, implementation-defined behavior, and compiler extensions are labeled explicitly.
+- Reference implementations are hidden by default for progressive disclosure.
+- Planned topics are not presented as completed documentation.
+
+## Roadmap
+
+- [Planned architecture and roadmap](/planned/)

@@ -118,3 +118,9 @@ To inspect raw representation bytes safely without violating aliasing rules, cop
 unsigned char bytes[sizeof(uint32_t)];
 memcpy(bytes, &x, sizeof(x)); // Valid, defined behavior
 ```
+
+## Continue learning
+
+- [Arrays in C](/c/fundamentals/arrays/) — see how array objects constrain pointer arithmetic.
+- [The malloc Family](/c/memory/malloc-family/) — connect pointer lifetime to dynamic allocation.
+- [Dangling Pointers and Use-After-Free](/c/memory/dangling-pointers/) — follow what happens when an object’s lifetime ends.

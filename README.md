@@ -23,7 +23,7 @@ Most online C and C++ tutorials either stop at basic syntax or gloss over real m
 
 ### Prerequisites
 
-- Node.js (v20+ or v22+)
+- Node.js 22.23.4 or newer
 - npm
 
 ### Development
@@ -41,6 +41,21 @@ npm run build
 # Preview build locally
 npm run preview
 ```
+
+### Run with Docker
+
+Build and serve the production static site through Nginx:
+
+```bash
+docker build --build-arg SITE_URL=https://docs.example.com -t ring0 .
+docker run --rm -p 8080:8080 ring0
+```
+
+Open <http://localhost:8080>.
+
+GitHub Actions runs formatting, the static build, and a production Docker image build for pushes to `main`/`dev` and pull requests.
+
+Set `SITE_URL` to the canonical deployed origin when building for deployment. Astro uses it to generate canonical page URLs and the sitemap; it is intentionally unset by default until Ring 0's public domain is confirmed. For Docker builds, pass it as a build argument as shown above.
 
 ## Structure
 

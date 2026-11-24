@@ -5,37 +5,48 @@ description: Transparent overview of planned sections and expansion milestones f
 
 import { Badge } from "@astrojs/starlight/components";
 
-This site prioritizes **technical accuracy, depth, and complete reference implementations over page count**. Rather than presenting shallow placeholders or incomplete summaries as finished articles, upcoming areas in the Information Architecture (IA) are clearly labeled as <Badge text="Planned" variant="caution" /> until they meet our editorial and verification bar.
+This roadmap distinguishes <Badge text="Available" variant="success" /> documentation from <Badge text="Planned" variant="caution" /> topics. Available entries link to published guides; planned entries are direction only and do not have article pages yet. Ring 0 prioritizes technical accuracy, depth, and complete examples over page count.
 
 ## Information Architecture (IA) Status
 
 ### C Language Track
 
-- <Badge text="Shipped" variant="success" /> **Fundamentals**: Variables &
-  Types, Operators & Expressions, Control Flow & Loops, Functions & Linkage,
-  Pointers, Arrays, Strings, Structures, Enums & Unions, Preprocessor & Macros
-- <Badge text="Shipped" variant="success" /> **Memory**: The malloc Family,
-  Dangling Pointers & UAF
+- <Badge text="Available" variant="success" /> **Fundamentals**: [Variables &
+  Types](/c/fundamentals/variables-and-types/), [Operators &
+  Expressions](/c/fundamentals/operators-and-expressions/), [Control Flow &
+  Loops](/c/fundamentals/control-flow/), [Functions &
+  Linkage](/c/fundamentals/functions/), [Pointers](/c/fundamentals/pointers/),
+  [Arrays](/c/fundamentals/arrays/), [Strings](/c/fundamentals/strings/),
+  [Structures](/c/fundamentals/structures/), [Enums &
+  Unions](/c/fundamentals/enums-and-unions/), [Preprocessor &
+  Macros](/c/fundamentals/preprocessor-and-macros/)
+- <Badge text="Available" variant="success" /> **Memory**: [The malloc
+  Family](/c/memory/malloc-family/), [Dangling Pointers &
+  UAF](/c/memory/dangling-pointers/)
 - <Badge text="Planned" variant="caution" /> **Advanced Systems C**:
   Variable-Length Arrays vs Dynamic Stack Allocation (`alloca`), Inline Assembly
   (`asm`), Bitfields and Endianness
 
 ### C++ Language Track
 
-- <Badge text="Shipped" variant="success" /> **Fundamentals**: Moving from C to
-  C++, Classes & Objects, RAII & Lifetimes, Smart Pointers, Templates &
-  Metaprogramming
-- <Badge text="Shipped" variant="success" /> **Concurrency**: Threads & Mutexes,
-  Atomics & Memory Models
+- <Badge text="Available" variant="success" /> **Fundamentals**: [Moving from C
+  to C++](/cpp/fundamentals/c-to-cpp/), [Classes &
+  Objects](/cpp/fundamentals/classes/), [RAII &
+  Lifetimes](/cpp/fundamentals/raii/), [Smart
+  Pointers](/cpp/fundamentals/smart-pointers/), [Templates &
+  Metaprogramming](/cpp/fundamentals/templates/)
+- <Badge text="Available" variant="success" /> **Concurrency**: [Threads &
+  Mutexes](/cpp/concurrency/threads/), [Atomics & Memory
+  Models](/cpp/concurrency/atomics/)
 - <Badge text="Planned" variant="caution" /> **Modern C++20/23 Systems**:
   Coroutines, `std::span` & `std::string_view` zero-copy idioms, Modules
 
 ### Libraries & SDKs
 
-- <Badge text="Shipped" variant="success" /> **Network Transfer**: `libcurl`
-  (Easy & Multi interfaces)
-- <Badge text="Shipped" variant="success" /> **Compression**: `zlib` (In-memory
-  & Streaming API, gzip headers)
+- <Badge text="Available" variant="success" /> **Network Transfer**:
+  [`libcurl`](/libraries/libcurl/) (Easy & Multi interfaces)
+- <Badge text="Available" variant="success" /> **Compression**:
+  [`zlib`](/libraries/zlib/) (In-memory & Streaming API, gzip headers)
 - <Badge text="Planned" variant="caution" /> **Crypto**: `OpenSSL` / `BoringSSL`
   BIO interfaces & TLS handshakes
 - <Badge text="Planned" variant="caution" /> **Graphics & Compute**: Vulkan
@@ -43,12 +54,13 @@ This site prioritizes **technical accuracy, depth, and complete reference implem
 
 ### Operating System Interfaces
 
-- <Badge text="Shipped" variant="success" /> **POSIX I/O**: File descriptors,
-  table architecture, partial transfers, and `EINTR`
-- <Badge text="Shipped" variant="success" /> **POSIX Sockets**: TCP lifecycle,
-  `SO_REUSEADDR`, non-blocking echo server
-- <Badge text="Shipped" variant="success" /> **Linux Kernel Interfaces**:
-  `epoll` edge-triggered multiplexed I/O
+- <Badge text="Available" variant="success" /> **POSIX I/O**: [File
+  I/O](/apis/posix-file-io/) — file descriptors, table architecture, partial
+  transfers, and `EINTR`
+- <Badge text="Available" variant="success" /> **POSIX Sockets**: [TCP
+  lifecycle](/apis/posix-sockets/), `SO_REUSEADDR`, non-blocking echo server
+- <Badge text="Available" variant="success" /> **Linux Kernel Interfaces**:
+  [epoll](/apis/epoll/) edge-triggered multiplexed I/O
 - <Badge text="Planned" variant="caution" /> **Modern Linux Async**: `io_uring`
   submission/completion queues, zero-copy buffer rings
 - <Badge text="Planned" variant="caution" /> **Windows Systems Programming**:
@@ -56,12 +68,15 @@ This site prioritizes **technical accuracy, depth, and complete reference implem
 
 ### Project Milestones
 
-- <Badge text="Shipped" variant="success" /> **Beginner**: Command-Line Task
-  Manager (`taskcli` binary format with atomic save)
-- <Badge text="Shipped" variant="success" /> **Intermediate**: Bounded Thread
-  Pool (`pthreads` condition variables & worker lifecycle)
-- <Badge text="Shipped" variant="success" /> **Advanced**: Custom Arena Memory
-  Allocator (bump pointer with chunk chaining)
+- <Badge text="Available" variant="success" /> **Beginner**: [Command-Line Task
+  Manager](/projects/cli-task-manager/) (`taskcli` binary format with atomic
+  save)
+- <Badge text="Available" variant="success" /> **Intermediate**: [Bounded Thread
+  Pool](/projects/thread-pool/) (`pthreads` condition variables & worker
+  lifecycle)
+- <Badge text="Available" variant="success" /> **Advanced**: [Custom Arena
+  Memory Allocator](/projects/arena-allocator/) (bump pointer with chunk
+  chaining)
 - <Badge text="Planned" variant="caution" /> **Advanced**: Non-blocking HTTP/1.1
   Event Loop Server (epoll-based)
 - <Badge text="Planned" variant="caution" /> **Expert**: JIT Bytecode

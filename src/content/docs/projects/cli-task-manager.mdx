@@ -11,6 +11,34 @@ import ReferenceSolution from "../../../components/ReferenceSolution.astro";
   <Badge text="C" variant="note" />
 </div>
 
+<dl class="project-facts">
+  <div>
+    <dt>Language</dt>
+    <dd>C17</dd>
+  </div>
+  <div>
+    <dt>Platform</dt>
+    <dd>POSIX</dd>
+  </div>
+  <div>
+    <dt>Builds</dt>
+    <dd>
+      <code>taskcli</code>
+    </dd>
+  </div>
+</dl>
+
+**Before you start:** review [C structures](/c/fundamentals/structures/), [C strings](/c/fundamentals/strings/), and [POSIX file I/O](/apis/posix-file-io/).
+
+<nav class="project-outline" aria-label="Project sections">
+  <span>Project guide</span>
+  <a href="#1-overview-objective">Overview</a>
+  <a href="#2-prerequisites-concepts">Prerequisites</a>
+  <a href="#6-implementation-stages">Stages</a>
+  <a href="#10-verification-test-plan">Verification</a>
+  <a href="#12-reference-implementation">Solution</a>
+</nav>
+
 ## 1. Overview & Objective
 
 Build `taskcli`, a fast, persistent command-line task manager written in pure C. The tool manages structured task records stored in a binary format on disk, demonstrating file system interaction, binary serialization, record manipulation, and atomic crash-resilient file writes.
