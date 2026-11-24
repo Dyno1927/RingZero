@@ -16,7 +16,7 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/Dyno1927/Ring0",
+          href: "https://github.com/Dyno1927/RingZero",
         },
       ],
       customCss: ["./src/styles/custom.css"],
