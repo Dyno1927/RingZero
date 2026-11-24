@@ -6,13 +6,16 @@ export default defineConfig({
   output: "static",
   integrations: [
     starlight({
-      title: "[name]",
+      title: "Ring 0",
       description:
         "Systems programming, explained from the metal up. C and C++ internals, memory, and OS interfaces.",
       social: {
-        github: "https://github.com/Dyno1927/[name]",
+        github: "https://github.com/Dyno1927/Ring0",
       },
       customCss: ["./src/styles/custom.css"],
+      components: {
+        ThemeSelect: "./src/components/ThemeSelect.astro",
+      },
       sidebar: [
         {
           label: "C",

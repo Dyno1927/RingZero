@@ -1,12 +1,12 @@
-# [name]
+# Ring 0
 
 Systems programming, explained from the metal up.
 
-[name] is my technical documentation site and reference guide for C and C++ internals, memory architecture, toolchains, and OS/hardware interfaces. Static site built with Astro + Starlight, deployed on Cloudflare Pages.
+Ring 0 (RingZero) is my technical documentation site and reference guide for C and C++ internals, memory architecture, toolchains, and OS/hardware interfaces. Static site built with Astro + Starlight, deployed on Cloudflare Pages.
 
 ## Why I'm Building This
 
-Most online C and C++ tutorials either stop at basic syntax or gloss over real memory models and UB. [name] is designed to be a long-term, high-accuracy technical reference:
+Most online C and C++ tutorials either stop at basic syntax or gloss over real memory models and UB. Ring 0 is designed to be a long-term, high-accuracy technical reference:
 
 - Accurate depth over page count: no hand-waving around undefined behavior or compiler-specific quirks.
 - Real, buildable projects with progressive disclosure (hidden reference solutions).
@@ -45,7 +45,7 @@ npm run preview
 ## Structure
 
 ```
-[name]/
+Ring-0/
 ├── Docs/             # Specs, mockups, design notes, and screenshots
 ├── src/
 │   ├── assets/       # Static assets, diagrams, and images

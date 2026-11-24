@@ -1,6 +1,6 @@
-# SysCore — Refined Project Brief
+# Ring 0 — Refined Project Brief
 
-Working name: **SysCore** (temporary — domain/brand to be secured after initial build)
+Project name: **Ring 0** (RingZero / Ring0)
 
 ## What it is
 

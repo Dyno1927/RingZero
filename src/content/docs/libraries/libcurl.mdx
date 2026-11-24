@@ -119,7 +119,7 @@ int main(void) {
 
     // Configure options
     curl_easy_setopt(curl, CURLOPT_URL, "https://api.github.com/zen");
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "syscore-agent/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ring0-agent/1.0");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L); // 10 second timeout
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);

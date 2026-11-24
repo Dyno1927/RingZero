@@ -1,6 +1,6 @@
-# Contributing to [name]
+# Contributing to Ring 0
 
-Thanks for wanting to contribute to [name].
+Thanks for wanting to contribute to Ring 0.
 
 This project is a high-accuracy, zero-fluff technical reference for C and C++ systems programming. Because readers rely on these guides for production systems, kernel interfaces, and hardware interactions, the editorial and correctness bar is strict.
 
