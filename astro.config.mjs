@@ -40,7 +40,16 @@ export default defineConfig({
                 },
                 { label: "Pointers", slug: "c/fundamentals/pointers" },
                 { label: "Arrays", slug: "c/fundamentals/arrays" },
+                { label: "Strings", slug: "c/fundamentals/strings" },
                 { label: "Structures", slug: "c/fundamentals/structures" },
+                {
+                  label: "Enums & Unions",
+                  slug: "c/fundamentals/enums-and-unions",
+                },
+                {
+                  label: "Preprocessor & Macros",
+                  slug: "c/fundamentals/preprocessor-and-macros",
+                },
               ],
             },
             {
@@ -77,6 +86,10 @@ export default defineConfig({
                   label: "Smart Pointers",
                   slug: "cpp/fundamentals/smart-pointers",
                 },
+                {
+                  label: "Templates & Metaprogramming",
+                  slug: "cpp/fundamentals/templates",
+                },
               ],
             },
             {
@@ -84,6 +97,10 @@ export default defineConfig({
               collapsed: true,
               items: [
                 { label: "Threads & Mutexes", slug: "cpp/concurrency/threads" },
+                {
+                  label: "Atomics & Memory Models",
+                  slug: "cpp/concurrency/atomics",
+                },
               ],
             },
           ],
@@ -99,7 +116,10 @@ export default defineConfig({
         {
           label: "Libraries",
           collapsed: true,
-          items: [{ label: "libcurl", slug: "libraries/libcurl" }],
+          items: [
+            { label: "libcurl", slug: "libraries/libcurl" },
+            { label: "zlib", slug: "libraries/zlib" },
+          ],
         },
         {
           label: "APIs & SDKs",
@@ -107,6 +127,7 @@ export default defineConfig({
           items: [
             { label: "POSIX File I/O", slug: "apis/posix-file-io" },
             { label: "POSIX Berkeley Sockets", slug: "apis/posix-sockets" },
+            { label: "Linux epoll", slug: "apis/epoll" },
           ],
         },
         {

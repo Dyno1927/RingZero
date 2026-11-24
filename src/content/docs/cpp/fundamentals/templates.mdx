@@ -1,0 +1,311 @@
+---
+title: Templates & Metaprogramming
+description: C++ templates from basics to C++20 concepts — generic functions, class templates, SFINAE, constexpr if, and type traits.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Why Templates
+
+Templates let you write code that works for **any type that satisfies the requirements** — without runtime dispatch, virtual tables, or dynamic allocation. The compiler generates a concrete specialisation per type at instantiation time.
+
+```cpp
+template <typename T>
+T max(T a, T b) {
+    return a > b ? a : b;
+}
+
+max(3, 5);        /* T = int   — compiler generates int   max(int, int)   */
+max(3.0, 5.0);    /* T = double — compiler generates double max(double, double) */
+max("a", "b");    /* T = const char* — compares pointers, not strings! */
+```
+
+The last call compiles but does the wrong thing — this is the classic pitfall of unconstrained templates. **Concepts** (C++20) fix this.
+
+---
+
+## Function Templates
+
+```cpp
+#include <cstddef>
+
+/* Swap any two objects of the same type */
+template <typename T>
+void swap(T &a, T &b) {
+    T tmp = std::move(a);
+    a = std::move(b);
+    b = std::move(tmp);
+}
+
+/* Multiple type parameters */
+template <typename Key, typename Value>
+Value lookupOrDefault(const Key &key, const Value &def);
+```
+
+### Template argument deduction
+
+The compiler deduces `T` from the function arguments:
+
+```cpp
+int x = 5, y = 10;
+swap(x, y);           /* deduced: T = int  */
+swap<double>(x, y);   /* explicit: T = double (implicit conversion) */
+```
+
+---
+
+## Class Templates
+
+```cpp
+template <typename T, std::size_t N>
+class FixedArray {
+public:
+    T &operator[](std::size_t i) { return data_[i]; }
+    std::size_t size() const { return N; }
+
+private:
+    T data_[N];
+};
+
+FixedArray<int, 8> buf;         /* T=int, N=8  */
+FixedArray<float, 3> vec;       /* T=float, N=3 */
+```
+
+Non-type template parameters (`N` above) can be any integral, pointer, or (C++20) floating-point / class-literal value.
+
+### Member function templates
+
+A class can have member functions that are themselves templates, independent of the class's template parameters:
+
+```cpp
+template <typename T>
+class Container {
+public:
+    template <typename Iter>
+    void assign(Iter first, Iter last);  /* accepts any iterator range */
+};
+```
+
+---
+
+## Template Specialisation
+
+### Full specialisation
+
+```cpp
+/* Primary template */
+template <typename T>
+struct IsPointer { static constexpr bool value = false; };
+
+/* Full specialisation for pointer types */
+template <typename T>
+struct IsPointer<T *> { static constexpr bool value = true; };
+
+static_assert(IsPointer<int *>::value);
+static_assert(!IsPointer<int>::value);
+```
+
+### Partial specialisation (class templates only)
+
+```cpp
+/* Primary */
+template <typename A, typename B>
+struct Pair { A first; B second; };
+
+/* Specialisation when both are the same type */
+template <typename T>
+struct Pair<T, T> { T first; T second; bool equal() const { return first == second; } };
+```
+
+---
+
+## SFINAE — Substitution Failure Is Not An Error
+
+When the compiler tries to substitute template arguments and the resulting code is ill-formed, it **silently discards** that candidate instead of issuing an error. This enables compile-time overload selection.
+
+```cpp
+#include <type_traits>
+
+/* Only enabled when T is an integral type */
+template <typename T>
+typename std::enable_if<std::is_integral<T>::value, T>::type
+doubled(T x) { return x * 2; }
+
+/* Only enabled for floating-point */
+template <typename T>
+typename std::enable_if<std::is_floating_point<T>::value, T>::type
+doubled(T x) { return x * 2.0; }
+
+doubled(5);     /* calls int version  */
+doubled(2.5);   /* calls double version */
+doubled("hi");  /* compile error: no matching overload */
+```
+
+SFINAE is powerful but hard to read. C++20 Concepts replace it cleanly.
+
+---
+
+## `constexpr if` (C++17)
+
+Branches on compile-time conditions **without** instantiating the rejected branch:
+
+```cpp
+#include <type_traits>
+#include <string>
+
+template <typename T>
+std::string describe(T val) {
+    if constexpr (std::is_integral_v<T>) {
+        return "integer: " + std::to_string(val);
+    } else if constexpr (std::is_floating_point_v<T>) {
+        return "float: " + std::to_string(val);
+    } else {
+        return "unknown type";
+    }
+}
+```
+
+Unlike a regular `if`, the rejected branch is not compiled at all — so it doesn't need to be valid for the given `T`. This replaces many SFINAE patterns with readable code.
+
+---
+
+## Type Traits (`<type_traits>`)
+
+The standard library ships a comprehensive set of compile-time type queries:
+
+```cpp
+#include <type_traits>
+
+std::is_integral<int>::value          /* true  */
+std::is_pointer<int *>::value         /* true  */
+std::is_same<int, long>::value        /* false */
+std::is_base_of<Base, Derived>::value /* true  if Derived : Base */
+std::is_trivially_copyable<T>::value  /* true  if T is safe to memcpy */
+
+/* C++17 _v shorthand */
+std::is_integral_v<int>   /* same as ::value */
+```
+
+### Transformation traits
+
+```cpp
+std::remove_reference_t<int &>     /* int */
+std::remove_const_t<const int>     /* int */
+std::add_pointer_t<int>            /* int * */
+std::decay_t<int[3]>               /* int * */
+```
+
+---
+
+## Concepts (C++20)
+
+Concepts are **named constraints** on template parameters, checked at the point of instantiation with clean error messages.
+
+```cpp
+#include <concepts>
+#include <cstddef>
+
+/* Define a concept */
+template <typename T>
+concept Addable = requires(T a, T b) {
+    { a + b } -> std::convertible_to<T>;
+};
+
+/* Constrain a function template */
+template <Addable T>
+T sum(T a, T b) { return a + b; }
+
+sum(1, 2);       /* OK — int satisfies Addable */
+sum("a", "b");   /* compile error: const char* doesn't satisfy Addable */
+```
+
+Standard library concepts live in `<concepts>`:
+
+```cpp
+std::integral<T>          /* T is an integer type */
+std::floating_point<T>    /* T is float/double/long double */
+std::same_as<T, U>        /* T and U are the same type */
+std::derived_from<D, B>   /* D inherits from B */
+std::copyable<T>          /* T can be copy-constructed and copy-assigned */
+std::invocable<F, Args...>/* F can be called with Args... */
+```
+
+### Abbreviated function template syntax (C++20)
+
+```cpp
+/* These three are equivalent */
+
+auto add(std::integral auto a, std::integral auto b) { return a + b; }
+
+template <std::integral T>
+T add(T a, T b) { return a + b; }
+
+template <typename T> requires std::integral<T>
+T add(T a, T b) { return a + b; }
+```
+
+---
+
+## Variadic Templates
+
+Accept any number of type parameters:
+
+```cpp
+#include <iostream>
+
+/* Base case — empty parameter pack */
+void print() {}
+
+/* Recursive case — peel one arg at a time */
+template <typename First, typename... Rest>
+void print(First first, Rest... rest) {
+    std::cout << first;
+    if constexpr (sizeof...(rest) > 0) std::cout << ", ";
+    print(rest...);
+}
+
+print(1, 2.5, "hello", 'x');  /* 1, 2.5, hello, x */
+```
+
+C++17 fold expressions collapse the recursion:
+
+```cpp
+template <typename... Ts>
+auto sumAll(Ts... args) {
+    return (... + args);  /* left fold: ((args[0] + args[1]) + args[2]) + ... */
+}
+
+sumAll(1, 2, 3, 4);  /* 10 */
+```
+
+---
+
+## Compile-Time Computation (`constexpr`)
+
+```cpp
+constexpr unsigned factorial(unsigned n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+constexpr unsigned f10 = factorial(10);  /* computed at compile time */
+static_assert(f10 == 3628800);
+```
+
+`constexpr` functions can run at compile time (when arguments are constant expressions) or at runtime otherwise. C++20 adds `consteval` (must run at compile time) and `constinit` (must have constant initializer).
+
+---
+
+## When to Use Templates vs. Inheritance
+
+| Use templates when                            | Use virtual dispatch when                            |
+| --------------------------------------------- | ---------------------------------------------------- |
+| Types are known at compile time               | Types resolved at runtime (plugins, deserialization) |
+| Zero-overhead abstraction is required         | Moderate overhead acceptable                         |
+| Working with numerics, containers, algorithms | Building extensible class hierarchies                |
+| Performance-critical hot paths                | Code simplicity and interface stability matter more  |
+
+<Aside type="tip">
+  Prefer concrete types and function templates for systems code. Reserve virtual
+  dispatch for genuine extension points. Mixing both (CRTP) gives static
+  polymorphism with inheritance syntax — useful for numeric/policy types.
+</Aside>

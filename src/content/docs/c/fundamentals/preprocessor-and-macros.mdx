@@ -1,0 +1,260 @@
+---
+title: Preprocessor & Macros
+description: How the C preprocessor works — includes, macro expansion, conditional compilation, and pitfalls.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## What the Preprocessor Does
+
+The preprocessor runs **before** the compiler sees your source. It is a pure text transformation pass — it knows nothing about C types, scopes, or semantics.
+
+```
+source.c → [preprocessor] → translation unit → [compiler] → object file
+```
+
+You can inspect the preprocessed output:
+
+```bash
+clang -E -P main.c   # -E: stop after preprocessing, -P: suppress line markers
+```
+
+---
+
+## `#include`
+
+```c
+#include <stdio.h>     /* system header — search path order: compiler's include dirs */
+#include "mylib.h"     /* project header — search path order: current dir first, then system */
+```
+
+`#include` literally pastes the file contents at that point in the source. Large header chains can bloat compilation significantly — use **forward declarations** and **include guards** to minimise this.
+
+### Include Guards
+
+```c
+/* Vec.h */
+#ifndef VEC_H
+#define VEC_H
+
+typedef struct { float x, y, z; } Vec3;
+
+#endif /* VEC_H */
+```
+
+Or the non-standard but universally supported:
+
+```c
+#pragma once
+```
+
+`#pragma once` is simpler and avoids accidental guard name collisions, but is not in the C standard. Both are fine in practice on every mainstream compiler.
+
+---
+
+## Object-like Macros
+
+```c
+#define MAX_CLIENTS   128
+#define SERVER_PORT   8080
+#define PI            3.14159265358979323846
+```
+
+A macro is a **textual substitution** — not a typed constant. The compiler never sees `MAX_CLIENTS`; it sees `128`.
+
+Prefer `const` variables or `enum` for typed constants in C99+:
+
+```c
+static const int maxClients = 128;  /* type-safe, debugger-visible */
+```
+
+---
+
+## Function-like Macros
+
+```c
+#define MAX(a, b)   ((a) > (b) ? (a) : (b))
+#define SQ(x)       ((x) * (x))
+```
+
+**Always parenthesise every argument and the whole expression.** Without it:
+
+```c
+#define BAD_SQ(x) x * x
+
+BAD_SQ(1 + 2)  →  1 + 2 * 1 + 2  =  5  /* wrong — expected 9 */
+```
+
+### Double-evaluation pitfall
+
+```c
+int n = 5;
+int r = MAX(n++, 3);  /* expands to ((n++) > (3) ? (n++) : (3)) — n++ runs twice! */
+```
+
+<Aside type="caution">
+  Never pass expressions with side effects to function-like macros. Use `static
+  inline` functions instead — they are type-safe, eliminate double-evaluation,
+  and the compiler inlines them just as aggressively.
+</Aside>
+
+```c
+static inline int max(int a, int b) { return a > b ? a : b; }
+```
+
+---
+
+## Variadic Macros
+
+```c
+#include <stdio.h>
+
+#define LOG(fmt, ...)  fprintf(stderr, "[LOG] " fmt "\n", __VA_ARGS__)
+
+LOG("connected: fd=%d port=%d", fd, port);
+/* expands to: fprintf(stderr, "[LOG] " "connected: fd=%d port=%d" "\n", fd, port); */
+```
+
+The `...` captures any additional arguments; `__VA_ARGS__` pastes them. With an empty variadic list, `__VA_ARGS__` can produce a trailing comma — use `##__VA_ARGS__` (GCC/Clang extension) or the C23 `__VA_OPT__(,)` to suppress it:
+
+```c
+#define LOG(fmt, ...)  fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
+```
+
+---
+
+## Stringification and Token Pasting
+
+### `#` — stringify
+
+```c
+#define ASSERT(expr) \
+    do { \
+        if (!(expr)) { \
+            fprintf(stderr, "Assert failed: %s  line %d\n", #expr, __LINE__); \
+            abort(); \
+        } \
+    } while (0)
+
+ASSERT(ptr != NULL);
+/* #expr → "ptr != NULL" (string literal) */
+```
+
+### `##` — token paste (concatenation)
+
+```c
+#define MAKE_ID(prefix, n)  prefix##_##n
+
+int MAKE_ID(sensor, 1) = 0;  /* becomes: int sensor_1 = 0; */
+```
+
+---
+
+## Predefined Macros
+
+| Macro              | Type           | Description                                            |
+| ------------------ | -------------- | ------------------------------------------------------ |
+| `__FILE__`         | `const char *` | Current source file name (string literal)              |
+| `__LINE__`         | `int`          | Current line number                                    |
+| `__func__`         | `const char *` | Current function name (C99)                            |
+| `__DATE__`         | `const char *` | Compilation date `"Nov 18 2026"`                       |
+| `__TIME__`         | `const char *` | Compilation time `"21:00:00"`                          |
+| `__STDC_VERSION__` | `long`         | C standard version: 199901L, 201112L, 201710L, 202311L |
+
+```c
+printf("built %s %s from %s:%d in %s()\n",
+       __DATE__, __TIME__, __FILE__, __LINE__, __func__);
+```
+
+---
+
+## Conditional Compilation
+
+```c
+#ifdef DEBUG
+    #define DLOG(msg) fprintf(stderr, "DEBUG: %s\n", (msg))
+#else
+    #define DLOG(msg) ((void)0)  /* no-op; still valid expression */
+#endif
+```
+
+Compile with `-DDEBUG` to enable the debug path:
+
+```bash
+clang -DDEBUG -o prog main.c
+```
+
+### `#if` / `#elif` / `#else`
+
+```c
+#if defined(__linux__)
+    #include <sys/epoll.h>
+#elif defined(__APPLE__)
+    #include <sys/event.h>   /* kqueue */
+#else
+    #error "Unsupported platform"
+#endif
+```
+
+### Feature-test macros
+
+```c
+#define _GNU_SOURCE      /* enable GNU extensions before any system header */
+#include <unistd.h>
+```
+
+<Aside type="note">
+  Feature-test macros like `_GNU_SOURCE` or `_POSIX_C_SOURCE` must be defined
+  **before the first system header**. Put them at the very top of the file or
+  pass via `-D_GNU_SOURCE` on the command line.
+</Aside>
+
+---
+
+## `do { } while (0)` Idiom
+
+Multi-statement macros wrapped in a bare `{ }` break `if/else`:
+
+```c
+#define SWAP(a, b) { int t = a; a = b; b = t; }
+
+if (cond)
+    SWAP(x, y);   /* expands with ; after }, creating two statements */
+else
+    doSomething(); /* "else" now detaches — compiler error or logic bug */
+```
+
+The fix:
+
+```c
+#define SWAP(a, b)  do { int t = (a); (a) = (b); (b) = t; } while (0)
+```
+
+Now `SWAP(x, y);` is a single statement regardless of context.
+
+---
+
+## `_Generic` (C11 Type-Generic Expressions)
+
+```c
+#define ABS(x) _Generic((x), \
+    int:    abs(x),          \
+    long:   labs(x),         \
+    double: fabs(x),         \
+    float:  fabsf(x)         \
+)
+```
+
+`_Generic` resolves at **compile time** based on the type of the controlling expression — essentially a type-safe macro dispatch mechanism. No code path for unmatched types is instantiated.
+
+---
+
+## Summary: Macros vs. Better Alternatives
+
+| Use case               | Avoid                | Prefer                                                        |
+| ---------------------- | -------------------- | ------------------------------------------------------------- |
+| Typed constants        | `#define N 128`      | `static const int n = 128;` or `enum { N = 128 };`            |
+| Inline functions       | Function-like macros | `static inline` functions                                     |
+| Type-generic functions | `MAX(a, b)` macro    | `_Generic` + typed overloads (C11)                            |
+| Debug logging          | Nothing              | Variadic macro with `__func__` / `__LINE__`                   |
+| Platform detection     | Guess                | `#if defined(...)` with `<sys/param.h>` or build system flags |

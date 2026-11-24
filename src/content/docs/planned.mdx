@@ -11,29 +11,33 @@ This site prioritizes **technical accuracy, depth, and complete reference implem
 
 ### C Language Track
 
-- <Badge text="Shipped" variant="success" /> **Fundamentals**: Pointers, Arrays,
-  Structures
-- <Badge text="Planned" variant="caution" /> **Memory**: Malloc family internals
-  (`ptmalloc`, `tcmalloc`, arena boundaries), Dangling pointers & Use-After-Free
+- <Badge text="Shipped" variant="success" /> **Fundamentals**: Variables &
+  Types, Operators & Expressions, Control Flow & Loops, Functions & Linkage,
+  Pointers, Arrays, Strings, Structures, Enums & Unions, Preprocessor & Macros
+- <Badge text="Shipped" variant="success" /> **Memory**: The malloc Family,
+  Dangling Pointers & UAF
 - <Badge text="Planned" variant="caution" /> **Advanced Systems C**:
   Variable-Length Arrays vs Dynamic Stack Allocation (`alloca`), Inline Assembly
   (`asm`), Bitfields and Endianness
 
 ### C++ Language Track
 
-- <Badge text="Shipped" variant="success" /> **Fundamentals**: Classes, RAII and
-  Scoped Ownership
-- <Badge text="Planned" variant="caution" /> **Concurrency**: `std::thread`,
-  `std::jthread`, `std::atomic` memory models (acquire-release semantics)
-- <Badge text="Planned" variant="caution" /> **Templates & Metaprogramming**:
-  SFINAE, Concepts (C++20), Constexpr systems programming
+- <Badge text="Shipped" variant="success" /> **Fundamentals**: Moving from C to
+  C++, Classes & Objects, RAII & Lifetimes, Smart Pointers, Templates &
+  Metaprogramming
+- <Badge text="Shipped" variant="success" /> **Concurrency**: Threads & Mutexes,
+  Atomics & Memory Models
+- <Badge text="Planned" variant="caution" /> **Modern C++20/23 Systems**:
+  Coroutines, `std::span` & `std::string_view` zero-copy idioms, Modules
 
 ### Libraries & SDKs
 
 - <Badge text="Shipped" variant="success" /> **Network Transfer**: `libcurl`
   (Easy & Multi interfaces)
-- <Badge text="Planned" variant="caution" /> **Compression & Crypto**: `zlib`,
-  `OpenSSL` / `BoringSSL` BIO interfaces
+- <Badge text="Shipped" variant="success" /> **Compression**: `zlib` (In-memory
+  & Streaming API, gzip headers)
+- <Badge text="Planned" variant="caution" /> **Crypto**: `OpenSSL` / `BoringSSL`
+  BIO interfaces & TLS handshakes
 - <Badge text="Planned" variant="caution" /> **Graphics & Compute**: Vulkan
   pipeline architecture, CUDA runtime memory models
 
@@ -41,18 +45,24 @@ This site prioritizes **technical accuracy, depth, and complete reference implem
 
 - <Badge text="Shipped" variant="success" /> **POSIX I/O**: File descriptors,
   table architecture, partial transfers, and `EINTR`
-- <Badge text="Planned" variant="caution" /> **Linux Kernel Interfaces**:
-  `epoll`, `io_uring`, Memory Mapping (`mmap`), Signal handling
+- <Badge text="Shipped" variant="success" /> **POSIX Sockets**: TCP lifecycle,
+  `SO_REUSEADDR`, non-blocking echo server
+- <Badge text="Shipped" variant="success" /> **Linux Kernel Interfaces**:
+  `epoll` edge-triggered multiplexed I/O
+- <Badge text="Planned" variant="caution" /> **Modern Linux Async**: `io_uring`
+  submission/completion queues, zero-copy buffer rings
 - <Badge text="Planned" variant="caution" /> **Windows Systems Programming**:
   Win32 Handles, Overlapped I/O, I/O Completion Ports (IOCP)
 
 ### Project Milestones
 
 - <Badge text="Shipped" variant="success" /> **Beginner**: Command-Line Task
-  Manager (`taskcli`)
+  Manager (`taskcli` binary format with atomic save)
 - <Badge text="Shipped" variant="success" /> **Intermediate**: Bounded Thread
-  Pool (`pthreads`)
-- <Badge text="Planned" variant="caution" /> **Advanced**: Intrusive Fast Hash
-  Table, Non-blocking HTTP/1.1 Event Loop
-- <Badge text="Planned" variant="caution" /> **Expert**: Custom Arena Memory
-  Allocator, JIT Bytecode Interpreter
+  Pool (`pthreads` condition variables & worker lifecycle)
+- <Badge text="Shipped" variant="success" /> **Advanced**: Custom Arena Memory
+  Allocator (bump pointer with chunk chaining)
+- <Badge text="Planned" variant="caution" /> **Advanced**: Non-blocking HTTP/1.1
+  Event Loop Server (epoll-based)
+- <Badge text="Planned" variant="caution" /> **Expert**: JIT Bytecode
+  Interpreter (x86-64 dynamic code emission)

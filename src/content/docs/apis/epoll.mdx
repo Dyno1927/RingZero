@@ -1,0 +1,280 @@
+---
+title: epoll & Multiplexed I/O
+description: Linux epoll for event-driven servers — edge vs. level-triggered, non-blocking I/O, and a minimal echo server.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## The Problem with Blocking I/O
+
+A thread blocked on `read()` can't serve other connections. The traditional fix is one-thread-per-connection — which breaks down past a few thousand connections (the C10k problem). Event-driven I/O solves this with a single thread monitoring many file descriptors simultaneously.
+
+**Three Linux mechanisms** (from oldest to newest):
+
+| API      | Available Since | Notes                                             |
+| -------- | --------------- | ------------------------------------------------- |
+| `select` | POSIX           | FD limit `FD_SETSIZE` (typically 1024), O(n) scan |
+| `poll`   | POSIX           | No hard limit, still O(n)                         |
+| `epoll`  | Linux 2.5.44    | O(1) event delivery, edge/level trigger           |
+
+`epoll` is what every serious Linux server (nginx, Redis, Node.js's libuv) uses under the hood.
+
+---
+
+## epoll Concepts
+
+### Level-triggered vs. Edge-triggered
+
+- **Level-triggered (LT)** — default. `epoll_wait` returns as long as the condition is true (buffer has data). Safe and easy; can call `read` as many times as you want.
+- **Edge-triggered (ET)** — returns **once** when the state changes (new data arrived). After that, `epoll_wait` will not return for this fd again until more data arrives. You **must** drain the fd completely in `EWOULDBLOCK` / non-blocking mode, or you'll miss events.
+
+```
+LT:  data available → wake → still available? → wake again
+ET:  data arrived   → wake → (no more wakes until new data arrives)
+```
+
+Edge-triggered requires more care but enables higher throughput patterns.
+
+---
+
+## Core API
+
+### Create an epoll instance
+
+```c
+#include <sys/epoll.h>
+
+int epfd = epoll_create1(0);
+/* epoll_create1(EPOLL_CLOEXEC) is preferred — sets FD_CLOEXEC automatically */
+if (epfd < 0) { perror("epoll_create1"); exit(1); }
+```
+
+### Add / modify / remove file descriptors
+
+```c
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+```
+
+| `op`            | Meaning                        |
+| --------------- | ------------------------------ |
+| `EPOLL_CTL_ADD` | Start watching `fd`            |
+| `EPOLL_CTL_MOD` | Change the event mask for `fd` |
+| `EPOLL_CTL_DEL` | Stop watching `fd`             |
+
+```c
+struct epoll_event ev;
+ev.events  = EPOLLIN;        /* readable */
+ev.data.fd = sockfd;         /* user data — survives in epoll_wait result */
+
+epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev);
+```
+
+### Wait for events
+
+```c
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout_ms);
+```
+
+Returns the number of ready events (0 on timeout, -1 on error). Each `events[i]` contains the event mask and your `data` from `epoll_ctl`.
+
+---
+
+## Making Sockets Non-Blocking
+
+For edge-triggered mode (and generally good practice):
+
+```c
+#include <fcntl.h>
+
+int setNonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+```
+
+A non-blocking `read()` returns `EAGAIN` / `EWOULDBLOCK` when no data is available instead of blocking. With `O_NONBLOCK` set, you can safely drain a socket in a loop until `EWOULDBLOCK`.
+
+---
+
+## Minimal Edge-Triggered Echo Server
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/epoll.h>
+
+#define MAX_EVENTS 64
+#define PORT       8080
+
+static int setNonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int makeListenSocket(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+
+    struct sockaddr_in addr = {
+        .sin_family      = AF_INET,
+        .sin_port        = htons(PORT),
+        .sin_addr.s_addr = INADDR_ANY,
+    };
+    bind(fd, (struct sockaddr *)&addr, sizeof addr);
+    listen(fd, SOMAXCONN);
+    return fd;
+}
+
+int main(void) {
+    int listenFd = makeListenSocket();
+    setNonblocking(listenFd);
+
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
+
+    /* Watch the listen socket for incoming connections */
+    struct epoll_event ev = { .events = EPOLLIN, .data.fd = listenFd };
+    epoll_ctl(epfd, EPOLL_CTL_ADD, listenFd, &ev);
+
+    struct epoll_event events[MAX_EVENTS];
+
+    for (;;) {
+        int nReady = epoll_wait(epfd, events, MAX_EVENTS, -1);  /* -1 = block forever */
+        if (nReady < 0) { perror("epoll_wait"); break; }
+
+        for (int i = 0; i < nReady; i++) {
+            int fd = events[i].data.fd;
+
+            if (fd == listenFd) {
+                /* Accept all pending connections */
+                for (;;) {
+                    int clientFd = accept4(listenFd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+                    if (clientFd < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;  /* done */
+                        perror("accept4"); break;
+                    }
+                    /* Register client with edge-triggered reads */
+                    struct epoll_event cev = {
+                        .events  = EPOLLIN | EPOLLET,   /* ET mode */
+                        .data.fd = clientFd,
+                    };
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, clientFd, &cev);
+                    printf("new connection: fd %d\n", clientFd);
+                }
+            } else {
+                /* Drain the socket completely — required for ET */
+                char buf[4096];
+                ssize_t n;
+                for (;;) {
+                    n = read(fd, buf, sizeof buf);
+                    if (n > 0) {
+                        /* Echo back */
+                        write(fd, buf, (size_t)n);
+                    } else if (n == 0) {
+                        /* Connection closed */
+                        printf("closed: fd %d\n", fd);
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        break;
+                    } else {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;  /* fully drained */
+                        perror("read");
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    close(epfd);
+    close(listenFd);
+    return 0;
+}
+```
+
+<Aside type="note">
+  `accept4` with `SOCK_NONBLOCK | SOCK_CLOEXEC` sets both flags atomically —
+  avoids a race between `accept` and `fcntl`. Available on Linux ≥ 2.6.28.
+</Aside>
+
+---
+
+## `epoll_event.data` Union
+
+The `data` field in `struct epoll_event` is a union — you're not limited to storing the fd:
+
+```c
+union epoll_data {
+    void    *ptr;
+    int      fd;
+    uint32_t u32;
+    uint64_t u64;
+};
+```
+
+Storing a pointer to a connection context struct is common:
+
+```c
+struct Connection {
+    int    fd;
+    int    state;
+    char   readBuf[8192];
+    size_t readLen;
+};
+
+struct Connection *conn = calloc(1, sizeof *conn);
+conn->fd = clientFd;
+
+struct epoll_event ev = {
+    .events   = EPOLLIN | EPOLLET,
+    .data.ptr = conn,   /* store pointer — retrieve in event loop */
+};
+epoll_ctl(epfd, EPOLL_CTL_ADD, clientFd, &ev);
+
+/* In the event loop: */
+struct Connection *c = events[i].data.ptr;
+```
+
+---
+
+## EPOLLONESHOT
+
+For multi-threaded servers: after one event fires, disable this fd to prevent two threads from handling the same fd concurrently. Re-arm it after you're done:
+
+```c
+struct epoll_event ev = {
+    .events  = EPOLLIN | EPOLLONESHOT,
+    .data.fd = fd,
+};
+epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);  /* re-arm after handling */
+```
+
+---
+
+## io_uring (Linux ≥ 5.1)
+
+`io_uring` is the successor: fully asynchronous, submission-queue based, zero-copy capable. It eliminates the round-trip through `epoll_wait` → `read` → result. For most applications, `epoll` with non-blocking I/O is simpler and sufficient; `io_uring` shines in storage-heavy or ultra-low-latency workloads.
+
+The `liburing` library wraps the raw `io_uring` syscalls in a usable API — documented in the planned Linux I/O guide.
+
+---
+
+## Summary
+
+| Feature                    | epoll LT              | epoll ET                            |
+| -------------------------- | --------------------- | ----------------------------------- |
+| Event fires                | While condition holds | On state change                     |
+| Must drain fd              | No                    | **Yes** (`EAGAIN` loop)             |
+| Miss events if not drained | No                    | **Yes**                             |
+| Complexity                 | Low                   | Medium                              |
+| Use when                   | General purpose       | High-throughput, known non-blocking |

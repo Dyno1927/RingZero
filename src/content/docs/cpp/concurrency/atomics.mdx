@@ -1,0 +1,271 @@
+---
+title: Atomics & Memory Models
+description: std::atomic, acquire/release semantics, memory_order, and lock-free patterns in C++11 and beyond.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Why Atomics Matter
+
+Shared mutable state across threads must be accessed through **synchronisation primitives** — otherwise you get data races, which are **undefined behaviour** in C++ (§6.9.2.1). UB here means the compiler can optimise assuming races never happen, producing code that "works" in debug but breaks in release.
+
+Mutexes are the safe default. Atomics are for the cases where mutex overhead is measurable and the access patterns are simple enough to reason about without locks.
+
+```cpp
+#include <atomic>
+
+std::atomic<int> counter{0};
+
+/* Safe to call from any thread */
+counter.fetch_add(1, std::memory_order_relaxed);
+```
+
+---
+
+## `std::atomic<T>` Basics
+
+```cpp
+#include <atomic>
+
+std::atomic<bool>     flag{false};
+std::atomic<int>      count{0};
+std::atomic<uint64_t> sequence{0};
+std::atomic<void *>   ptr{nullptr};
+```
+
+### Core operations
+
+```cpp
+T load(memory_order = memory_order_seq_cst) const;
+void store(T val, memory_order = memory_order_seq_cst);
+T exchange(T val, memory_order = memory_order_seq_cst);  /* atomic swap */
+
+T fetch_add(T delta, memory_order = memory_order_seq_cst);  /* return old value */
+T fetch_sub(T delta, memory_order = memory_order_seq_cst);
+T fetch_and(T, memory_order = memory_order_seq_cst);
+T fetch_or(T, memory_order = memory_order_seq_cst);
+
+/* Compare-and-swap */
+bool compare_exchange_weak(T &expected, T desired, memory_order success, memory_order failure);
+bool compare_exchange_strong(T &expected, T desired, memory_order success, memory_order failure);
+```
+
+The `++` and `+=` operators are shorthand for `fetch_add`, but they always use `memory_order_seq_cst` — the most expensive ordering. Prefer `fetch_add` with an explicit ordering for hot paths.
+
+### `is_lock_free()`
+
+```cpp
+std::atomic<int> a;
+std::cout << a.is_lock_free() << "\n";   /* 1 on x86/arm64 for int-sized types */
+```
+
+If `is_lock_free()` returns false, the atomic uses an internal mutex. On x86-64, all types up to 8 bytes are lock-free; 16-byte types (e.g., `atomic<pair<int64_t, int64_t>>`) may not be.
+
+---
+
+## Memory Ordering
+
+The C++ memory model is not the intuitive "sequential consistency" model most programmers assume. CPUs and compilers reorder instructions for performance. `memory_order` controls which reorderings are allowed.
+
+```
+Weakest (most performant)                      Strongest (least performant)
+      ↓                                                     ↓
+relaxed < consume < acquire/release < acq_rel < seq_cst
+```
+
+### `memory_order_relaxed`
+
+No ordering guarantees between this operation and any other. Only the atomicity of the operation itself is guaranteed.
+
+```cpp
+/* Global hit counter — we only care about the final value, not when it updates */
+std::atomic<uint64_t> hits{0};
+
+void recordHit() {
+    hits.fetch_add(1, std::memory_order_relaxed);
+}
+```
+
+<Aside type="caution">
+  Relaxed is **only** safe when the only requirement is that the operation is
+  atomic. Using relaxed for synchronisation between threads (e.g., a "ready"
+  flag) is a data race.
+</Aside>
+
+### `memory_order_acquire` / `memory_order_release`
+
+The fundamental synchronisation pair:
+
+- **Release** (`store`): all writes before the release are visible to any thread that subsequently **acquires** the same atomic.
+- **Acquire** (`load`): all writes published by the releasing thread are visible after the acquire.
+
+```cpp
+#include <atomic>
+#include <thread>
+#include <cassert>
+#include <string>
+
+std::atomic<bool> ready{false};
+std::string data;
+
+void producer() {
+    data = "hello";                               /* (1) */
+    ready.store(true, std::memory_order_release); /* (2) release — publishes (1) */
+}
+
+void consumer() {
+    while (!ready.load(std::memory_order_acquire)) /* (3) acquire — sees (2) */
+        ;
+    assert(data == "hello");   /* (4) guaranteed — (1) is visible after (3) */
+}
+```
+
+The acquire/release pair forms a **happens-before** edge: (1) happens-before (4).
+
+### `memory_order_seq_cst`
+
+Sequential consistency — a global total order over all `seq_cst` operations across all threads. The easiest to reason about, the most expensive. Use it as the default and only optimise when profiling shows the cost.
+
+### `memory_order_acq_rel`
+
+For **read-modify-write** operations (like `fetch_add`): combines acquire on the read half and release on the write half. Used for things like spinlocks and reference count decrements.
+
+---
+
+## Compare-and-Swap (CAS)
+
+The building block of lock-free algorithms:
+
+```cpp
+bool compare_exchange_strong(T &expected, T desired, memory_order);
+```
+
+Atomically: if `*this == expected`, write `desired` and return `true`. Otherwise, write `*this` into `expected` and return `false`.
+
+```cpp
+/* Lock-free push onto a Treiber stack */
+struct Node {
+    int value;
+    Node *next;
+};
+
+std::atomic<Node *> head{nullptr};
+
+void push(int val) {
+    Node *node = new Node{val, nullptr};
+    node->next = head.load(std::memory_order_relaxed);
+    while (!head.compare_exchange_weak(
+        node->next, node,
+        std::memory_order_release,
+        std::memory_order_relaxed))
+    { /* retry — CAS weak may fail spuriously on some architectures */ }
+}
+```
+
+### `weak` vs `strong`
+
+- `compare_exchange_weak` — may fail spuriously (loop required, but faster on LL/SC architectures like ARM).
+- `compare_exchange_strong` — only fails if the value changed; no spurious failure.
+
+Use `weak` in a retry loop (the common case). Use `strong` only when you can't retry.
+
+---
+
+## ABA Problem
+
+CAS checks the value, not identity. If another thread changes `A → B → A`, CAS sees `A` and succeeds even though the state changed underneath.
+
+Mitigations:
+
+- **Tagged pointer**: pack a version counter into the unused bits of a pointer.
+- **Hazard pointers**: prevent reclamation of nodes still referenced.
+- **Epoch-based reclamation** (used in jemalloc, folly): defer deallocation until no thread is in a critical section.
+
+<Aside type="note">
+  Lock-free data structures are significantly harder to get right than
+  mutex-based ones. Use `std::mutex` and `std::lock_guard` unless profiling
+  proves they are your bottleneck. The lock-free path is a maintenance burden.
+</Aside>
+
+---
+
+## `std::atomic_flag` — The Simplest Atomic
+
+`atomic_flag` is guaranteed lock-free on every implementation. It supports only `test_and_set` and `clear`:
+
+```cpp
+#include <atomic>
+
+class Spinlock {
+    std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
+public:
+    void lock() {
+        while (flag_.test_and_set(std::memory_order_acquire))
+            ;   /* spin */
+    }
+    void unlock() {
+        flag_.clear(std::memory_order_release);
+    }
+};
+```
+
+A spinlock is appropriate **only** when the critical section is very short (< a few hundred nanoseconds) and contention is rare. For anything else, `std::mutex` is better — it sleeps the thread rather than burning CPU.
+
+---
+
+## Atomic Reference Counting
+
+The classic `shared_ptr` control block uses atomic ref counting:
+
+```cpp
+struct ControlBlock {
+    std::atomic<int> strongCount;
+    std::atomic<int> weakCount;
+};
+
+void addRef(ControlBlock *cb) {
+    cb->strongCount.fetch_add(1, std::memory_order_relaxed);
+    /* Relaxed: a ref count increment can't "observe" anything new */
+}
+
+void release(ControlBlock *cb) {
+    if (cb->strongCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        /* Last ref dropped. Acquire ensures we see all prior writes to the object */
+        delete cb->object;
+        /* Then deal with weak count... */
+    }
+}
+```
+
+This is exactly the pattern in `std::shared_ptr`: `fetch_sub` with `acq_rel` on decrement, `relaxed` on increment.
+
+---
+
+## `std::atomic<std::shared_ptr<T>>` (C++20)
+
+Before C++20, using `shared_ptr` across threads required `std::atomic_load` / `std::atomic_store` free functions. C++20 makes it native:
+
+```cpp
+#include <atomic>
+#include <memory>
+
+std::atomic<std::shared_ptr<Config>> globalConfig;
+
+void reload(std::shared_ptr<Config> newCfg) {
+    globalConfig.store(std::move(newCfg), std::memory_order_release);
+}
+
+auto cfg = globalConfig.load(std::memory_order_acquire);
+```
+
+---
+
+## Quick Reference: Ordering Choice
+
+| Scenario                                                | Recommended ordering |
+| ------------------------------------------------------- | -------------------- |
+| Counter, stats — no synchronisation needed              | `relaxed`            |
+| Publish data to another thread (store side)             | `release`            |
+| Consume data published by another thread (load side)    | `acquire`            |
+| Read-modify-write (fetch_add, CAS) with synchronisation | `acq_rel`            |
+| Simple and correctness is paramount                     | `seq_cst` (default)  |

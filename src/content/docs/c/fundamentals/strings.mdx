@@ -1,0 +1,251 @@
+---
+title: String Handling
+description: C strings, the standard string library, common pitfalls, and safer alternatives.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## What a C String Is
+
+A C string is a **null-terminated byte sequence (NTBS)**: a contiguous array of `char` values where the first `'\0'` (NUL byte, value 0) marks the end.
+
+```c
+char greeting[6] = { 'h', 'e', 'l', 'l', 'o', '\0' };
+char greeting2[] = "hello";   /* identical — compiler adds '\0' automatically */
+```
+
+```
+greeting: [ h | e | l | l | o | \0 ]
+           0   1   2   3   4    5
+```
+
+A `char *` pointing somewhere in that array is not itself a string — the string is defined by the NUL terminator. Forgetting the terminator is source of countless buffer overflows.
+
+---
+
+## String Literals
+
+```c
+const char *msg = "hello";       /* pointer to static string literal */
+char buf[]      = "hello";       /* copy on the stack — writable */
+```
+
+**Modifying a string literal is undefined behaviour:**
+
+```c
+char *p = "hello";
+p[0] = 'H';   /* UB — may segfault, may silently corrupt, depends on the platform */
+```
+
+Always use `const char *` for string literals. Some compilers warn, but not all.
+
+---
+
+## `<string.h>` Functions
+
+### Length
+
+```c
+size_t strlen(const char *s);
+```
+
+Walks from `s` until it finds `'\0'`. O(n). Never call in a tight loop on the same string — cache the result.
+
+### Copy
+
+```c
+char *strcpy(char *dst, const char *src);
+char *strncpy(char *dst, const char *src, size_t n);
+```
+
+`strcpy` copies until (and including) `'\0'`. **No bounds check** — if `src` is longer than `dst`'s capacity, you get a buffer overflow.
+
+`strncpy` copies at most `n` bytes. If `src` is shorter, it zero-pads to `n`. If `src` is longer, **no NUL terminator is written** — the result is not a valid C string.
+
+```c
+/* Safe pattern */
+strncpy(dst, src, sizeof dst - 1);
+dst[sizeof dst - 1] = '\0';
+```
+
+Prefer `strlcpy` (BSD/C23) or `snprintf` for safe truncating copy:
+
+```c
+/* strlcpy: always NUL-terminates, returns required length */
+strlcpy(dst, src, sizeof dst);
+
+/* snprintf: format-aware, always NUL-terminates */
+snprintf(dst, sizeof dst, "%s", src);
+```
+
+### Concatenate
+
+```c
+char *strcat(char *dst, const char *src);
+char *strncat(char *dst, const char *src, size_t n);
+```
+
+Same hazard as `strcpy`: `strcat` doesn't know `dst`'s capacity. `strncat(dst, src, n)` appends at most `n` bytes from `src` **and always writes the NUL** — but `n` should be `sizeof dst - strlen(dst) - 1`, which is easy to get wrong.
+
+### Compare
+
+```c
+int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, size_t n);
+int strcasecmp(const char *a, const char *b);  /* POSIX — case-insensitive */
+```
+
+Returns negative, zero, or positive (lexicographic order on `unsigned char` values). Never use `==` to compare strings — it compares pointers, not contents.
+
+```c
+if (strcmp(input, "quit") == 0) { /* user typed quit */ }
+```
+
+### Search
+
+```c
+char *strchr(const char *s, int c);       /* first occurrence of c in s */
+char *strrchr(const char *s, int c);      /* last occurrence */
+char *strstr(const char *haystack, const char *needle);  /* substring search */
+```
+
+All return `NULL` on failure. The returned pointer points into the original string — do not free it.
+
+```c
+char path[] = "/home/dyno/projects";
+char *last = strrchr(path, '/');
+if (last) printf("filename: %s\n", last + 1);  /* "projects" */
+```
+
+### Tokenise
+
+```c
+char *strtok(char *str, const char *delimiters);
+```
+
+`strtok` modifies the input string (replaces delimiters with `'\0'`), is not reentrant, and maintains hidden global state. For multi-threaded or nested tokenisation, use `strtok_r` (POSIX) or write your own with `strcspn`:
+
+```c
+/* Reentrant version */
+char *saveptr;
+char *token = strtok_r(input, ",", &saveptr);
+while (token) {
+    process(token);
+    token = strtok_r(NULL, ",", &saveptr);
+}
+```
+
+---
+
+## Number Conversion
+
+```c
+long    strtol(const char *s, char **endptr, int base);
+double  strtod(const char *s, char **endptr);
+long long strtoll(const char *s, char **endptr, int base);
+```
+
+Always check `endptr` and `errno`:
+
+```c
+#include <errno.h>
+#include <stdlib.h>
+
+errno = 0;
+char *end;
+long val = strtol("123abc", &end, 10);
+
+if (errno != 0)        { /* overflow/underflow */ }
+if (end == "123abc")   { /* no digits consumed  */ }
+if (*end != '\0')      { /* trailing garbage: "abc" */ }
+/* otherwise val is valid */
+```
+
+Avoid `atoi`/`atof` — they have no error reporting and invoke UB on overflow.
+
+---
+
+## `<stdio.h>` String Functions
+
+### Formatted output into a buffer
+
+```c
+int snprintf(char *buf, size_t size, const char *fmt, ...);
+```
+
+Writes at most `size - 1` characters, always NUL-terminates. Returns the number of characters that **would** have been written if the buffer were unlimited — if return value `>= size`, the output was truncated.
+
+```c
+char out[64];
+int n = snprintf(out, sizeof out, "fd=%d addr=%s", fd, ip);
+if (n >= (int)sizeof out) {
+    /* output was truncated */
+}
+```
+
+### Formatted input from a string
+
+```c
+int sscanf(const char *str, const char *fmt, ...);
+```
+
+Returns the number of items successfully assigned. Always check the return value.
+
+```c
+int port;
+if (sscanf(line, "port=%d", &port) != 1) {
+    /* parse error */
+}
+```
+
+---
+
+## Common Pitfalls
+
+<Aside type="caution">
+  **Off-by-one errors** are the #1 bug with C strings. Always allocate
+  `strlen(s) + 1` for a copy (the `+1` is for the NUL). Missing it corrupts
+  adjacent memory silently.
+</Aside>
+
+```c
+/* Wrong — no room for '\0' */
+char *copy = malloc(strlen(src));
+strcpy(copy, src);  /* writes one byte past the allocation */
+
+/* Right */
+char *copy = malloc(strlen(src) + 1);
+strcpy(copy, src);
+```
+
+| Pitfall                                     | Root cause                                | Fix                                            |
+| ------------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| Buffer overflow via `gets`                  | No bounds at all                          | Never use `gets` — removed in C11; use `fgets` |
+| `strcpy` overflow                           | No bounds check                           | Use `strlcpy` or `snprintf`                    |
+| Modifying string literals                   | Literals live in read-only segment        | Use `char buf[] = "..."` for mutable copies    |
+| `strcmp` returns non-zero for equal strings | Different encodings / trailing whitespace | Trim before compare, check encoding            |
+| `strtok` state across threads               | Global save pointer                       | Use `strtok_r`                                 |
+| `strlen` in loop condition                  | O(n) each iteration                       | Cache length before loop                       |
+
+---
+
+## Safer Wrappers Pattern
+
+For greenfield code, wrapping the dangerous functions in a checked layer eliminates the entire category:
+
+```c
+/* Returns bytes written (excluding NUL), or -1 on truncation */
+int safeCopy(char *dst, size_t dstSize, const char *src) {
+    if (dstSize == 0) return -1;
+    size_t n = strlen(src);
+    if (n >= dstSize) {
+        memcpy(dst, src, dstSize - 1);
+        dst[dstSize - 1] = '\0';
+        return -1;   /* truncated */
+    }
+    memcpy(dst, src, n + 1);
+    return (int)n;
+}
+```
+
+In production systems code you'll see similar wrappers under names like `xstrlcpy`, `safe_strncpy`, or just `strlcpy` on BSDs.

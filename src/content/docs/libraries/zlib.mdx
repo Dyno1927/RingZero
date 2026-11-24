@@ -1,0 +1,281 @@
+---
+title: zlib — Compression & Decompression
+description: zlib deflate/inflate API, streaming compression, and practical usage patterns.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## What zlib Is
+
+**zlib** is the reference implementation of the DEFLATE compression algorithm (RFC 1951) plus the zlib wrapper format (RFC 1950) and the gzip format (RFC 1952). It is statically or dynamically linked into virtually every piece of software that touches compressed data — libpng, curl, git, OpenSSL, CPython, the Linux kernel.
+
+```
+gzip file (.gz)  = gzip header + DEFLATE stream + CRC32 + size
+zlib stream      = zlib header + DEFLATE stream + Adler-32 checksum
+raw DEFLATE      = just the DEFLATE stream
+```
+
+---
+
+## Installation
+
+```bash
+# Debian / Ubuntu
+apt-get install zlib1g-dev
+
+# Fedora / RHEL
+dnf install zlib-devel
+
+# Arch
+pacman -S zlib
+
+# macOS (already present in SDK — link with -lz)
+```
+
+Compile with `-lz`:
+
+```bash
+clang -o compress compress.c -lz
+```
+
+---
+
+## Core API — One-Shot (In-Memory)
+
+For small data that fits in memory, `compress2` and `uncompress` are the simplest entry points.
+
+```c
+#include <zlib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+    const char *src = "Hello, zlib! This text will be compressed.";
+    uLong srcLen    = (uLong)strlen(src);
+
+    /* Compression */
+    uLong boundLen = compressBound(srcLen);     /* worst-case output size */
+    Bytef *compBuf = malloc(boundLen);
+
+    uLong compLen = boundLen;
+    int rc = compress2(compBuf, &compLen, (const Bytef *)src, srcLen, Z_BEST_SPEED);
+    if (rc != Z_OK) { fprintf(stderr, "compress2 failed: %d\n", rc); return 1; }
+    printf("compressed %lu → %lu bytes\n", srcLen, compLen);
+
+    /* Decompression */
+    Bytef *outBuf = malloc(srcLen + 1);
+    uLong outLen  = srcLen;
+
+    rc = uncompress(outBuf, &outLen, compBuf, compLen);
+    if (rc != Z_OK) { fprintf(stderr, "uncompress failed: %d\n", rc); return 1; }
+    outBuf[outLen] = '\0';
+    printf("restored: %s\n", outBuf);
+
+    free(compBuf);
+    free(outBuf);
+    return 0;
+}
+```
+
+### Compression levels
+
+```c
+Z_NO_COMPRESSION       /* 0 — just wraps, no deflate */
+Z_BEST_SPEED           /* 1 — fastest, lowest ratio */
+Z_DEFAULT_COMPRESSION  /* 6 — balanced (zlib default) */
+Z_BEST_COMPRESSION     /* 9 — best ratio, slowest */
+```
+
+---
+
+## Streaming API
+
+For large files or network streams, process data chunk by chunk using `z_stream`.
+
+### Compression
+
+```c
+#include <zlib.h>
+#include <stdio.h>
+
+#define CHUNK 16384
+
+int compressFile(FILE *src, FILE *dst, int level) {
+    z_stream strm = {0};   /* zero-init is required */
+    if (deflateInit(&strm, level) != Z_OK) return -1;
+
+    unsigned char inBuf[CHUNK], outBuf[CHUNK];
+    int flush;
+
+    do {
+        strm.avail_in = (uInt)fread(inBuf, 1, CHUNK, src);
+        if (ferror(src)) { deflateEnd(&strm); return -1; }
+
+        flush = feof(src) ? Z_FINISH : Z_NO_FLUSH;
+        strm.next_in = inBuf;
+
+        /* Compress until output buffer is not full */
+        do {
+            strm.avail_out = CHUNK;
+            strm.next_out  = outBuf;
+
+            deflate(&strm, flush);  /* return ignored here — check avail_out */
+
+            uInt have = CHUNK - strm.avail_out;
+            if (fwrite(outBuf, 1, have, dst) != have || ferror(dst)) {
+                deflateEnd(&strm);
+                return -1;
+            }
+        } while (strm.avail_out == 0);  /* output full → more data to flush */
+
+    } while (flush != Z_FINISH);
+
+    deflateEnd(&strm);
+    return 0;
+}
+```
+
+### Decompression
+
+```c
+int decompressFile(FILE *src, FILE *dst) {
+    z_stream strm = {0};
+    if (inflateInit(&strm) != Z_OK) return -1;
+
+    unsigned char inBuf[CHUNK], outBuf[CHUNK];
+    int rc;
+
+    do {
+        strm.avail_in = (uInt)fread(inBuf, 1, CHUNK, src);
+        if (ferror(src)) { inflateEnd(&strm); return -1; }
+        if (strm.avail_in == 0) break;
+        strm.next_in = inBuf;
+
+        do {
+            strm.avail_out = CHUNK;
+            strm.next_out  = outBuf;
+
+            rc = inflate(&strm, Z_NO_FLUSH);
+            if (rc == Z_STREAM_ERROR || rc == Z_DATA_ERROR || rc == Z_MEM_ERROR) {
+                inflateEnd(&strm);
+                return -1;
+            }
+
+            uInt have = CHUNK - strm.avail_out;
+            if (fwrite(outBuf, 1, have, dst) != have || ferror(dst)) {
+                inflateEnd(&strm);
+                return -1;
+            }
+        } while (strm.avail_out == 0);
+
+    } while (rc != Z_STREAM_END);
+
+    inflateEnd(&strm);
+    return rc == Z_STREAM_END ? 0 : -1;
+}
+```
+
+<Aside type="note">
+  Always call `deflateEnd` / `inflateEnd` even on error paths — they free
+  internal zlib state. Missing them leaks memory.
+</Aside>
+
+---
+
+## gzip Format
+
+To read/write `.gz` files, use the `gz*` family — a higher-level API that handles gzip headers automatically:
+
+```c
+#include <zlib.h>
+#include <stdio.h>
+
+int main(void) {
+    /* Write gzip file */
+    gzFile gz = gzopen("output.gz", "wb9");   /* 'b' = binary, '9' = level 9 */
+    if (!gz) return 1;
+
+    gzwrite(gz, "hello, gzip\n", 12);
+    gzclose(gz);
+
+    /* Read gzip file */
+    gz = gzopen("output.gz", "rb");
+    char buf[64];
+    int n = gzread(gz, buf, sizeof buf - 1);
+    buf[n] = '\0';
+    printf("%s", buf);   /* "hello, gzip\n" */
+    gzclose(gz);
+    return 0;
+}
+```
+
+The `gz*` API is simpler but less flexible — it hides control over flushing and doesn't expose the streaming state machine.
+
+---
+
+## Checksums
+
+zlib exposes Adler-32 and CRC-32 as standalone utilities:
+
+```c
+uLong adler = adler32(0L, Z_NULL, 0);     /* init */
+adler = adler32(adler, data, dataLen);    /* update */
+
+uLong crc = crc32(0L, Z_NULL, 0);        /* init */
+crc = crc32(crc, data, dataLen);         /* update */
+```
+
+Feed data in chunks to handle streams. Combine results:
+
+```c
+uLong crc32_combine(uLong crc1, uLong crc2, z_off_t len2);
+```
+
+---
+
+## Error Handling
+
+```c
+int rc = deflate(&strm, Z_FINISH);
+
+switch (rc) {
+case Z_OK:            /* progress made, more calls needed */
+case Z_STREAM_END:    /* input fully consumed + output fully flushed */
+case Z_BUF_ERROR:     /* no progress possible — avail_in=0 and avail_out=0 */
+    break;
+
+case Z_STREAM_ERROR:  /* inconsistent stream state (bug) */
+case Z_DATA_ERROR:    /* corrupt or invalid data */
+case Z_MEM_ERROR:     /* malloc failure inside zlib */
+    fprintf(stderr, "zlib error: %s\n", strm.msg);
+    break;
+}
+```
+
+`Z_BUF_ERROR` from `inflate` / `deflate` is **not fatal** — it just means you need to provide more input or consume more output before calling again.
+
+---
+
+## Pitfalls
+
+| Pitfall                                       | Description                                                                          | Fix                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Skipping `deflateEnd` on error                | Leaks zlib internal state                                                            | Always call in both success and error paths                |
+| `avail_in = 0` → not done                     | Decompressor may still have output buffered                                          | Keep calling inflate until `avail_out > 0` after each call |
+| Wrong `flush` on last chunk                   | `Z_FINISH` is required to flush the final DEFLATE block                              | Track EOF and pass `Z_FINISH` on the last read             |
+| `inflateInit` for gzip data                   | `inflateInit` handles zlib/deflate; gzip needs `inflateInit2(&strm, 16 + MAX_WBITS)` | Use `inflateInit2` with windowBits 16+15 for gzip          |
+| Calling `compress` on data already compressed | Most compressed formats expand slightly under re-compression                         | Only compress raw / text data                              |
+
+### Reading gzip with `inflateInit2`
+
+```c
+/* windowBits 16 + MAX_WBITS = gzip mode */
+inflateInit2(&strm, 16 + MAX_WBITS);
+
+/* windowBits -MAX_WBITS = raw DEFLATE (no header) */
+inflateInit2(&strm, -MAX_WBITS);
+
+/* windowBits 15 or MAX_WBITS = standard zlib header (default) */
+inflateInit2(&strm, MAX_WBITS);
+```

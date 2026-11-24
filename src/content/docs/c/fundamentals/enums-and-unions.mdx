@@ -1,0 +1,200 @@
+---
+title: Enums & Unions
+description: Enumeration types and union memory sharing in C — representation, pitfalls, and tagged-union patterns.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+## Enumerations
+
+`enum` defines a set of named integer constants. Under the hood every enumerator is an `int` (or large enough signed integer — implementation-defined for large values).
+
+```c
+enum Direction {
+    DIR_NORTH = 0,
+    DIR_EAST,   /* 1 */
+    DIR_SOUTH,  /* 2 */
+    DIR_WEST,   /* 3 */
+};
+```
+
+Enumerators live in file/block scope, **not** inside the `enum` tag's namespace — so `DIR_NORTH` is reachable without any qualifier.
+
+```c
+enum Direction d = DIR_EAST;
+printf("%d\n", d);  /* prints 1 */
+```
+
+### Type of an enum variable
+
+The underlying type of an `enum` variable is implementation-defined (usually `int`). The C standard only guarantees the enumerators fit in an `int`.
+
+```c
+/* Explicitly naming the underlying type is a C23 addition */
+enum Color : unsigned char {
+    RED, GREEN, BLUE
+};
+```
+
+For C11 and earlier, if you need a specific width, `typedef uint8_t Color;` and constants `#define COLOR_RED 0u` is the idiomatic approach in embedded code.
+
+### Enums as bit flags
+
+```c
+enum FileMode {
+    MODE_READ    = 1 << 0,  /* 0x01 */
+    MODE_WRITE   = 1 << 1,  /* 0x02 */
+    MODE_EXECUTE = 1 << 2,  /* 0x04 */
+};
+
+void openFile(const char *path, int flags) {
+    if (flags & MODE_WRITE) { /* ... */ }
+}
+
+openFile("data.bin", MODE_READ | MODE_WRITE);
+```
+
+<Aside type="caution">
+  Bitwise OR of two enumerators produces an `int`, not an `enum` value.
+  Assigning it back to an enum variable with `-Wconversion` enabled will warn.
+  Cast explicitly or use `int flags`.
+</Aside>
+
+---
+
+## Unions
+
+A `union` is a type whose members **share the same storage**. The size of a union is the size of its largest member (plus any trailing padding needed for alignment).
+
+```c
+union Value {
+    int    i;
+    float  f;
+    double d;
+};
+
+union Value v;
+v.d = 3.14;
+/* v.i and v.f overlap with v.d — reading them is type-punning (see below) */
+```
+
+Only the **last written member** is valid to read (C11 §6.5.2.3). Reading any other member is **undefined behaviour** in C++ and was formerly UB in C, but C99/C11 explicitly permit "type-punning through unions" (§6.5.2.3 p5), so it is defined in C.
+
+<Aside type="note">
+  C and C++ differ here. In C, reading an inactive union member is well-defined
+  type-punning. In C++, it is undefined behaviour — use `memcpy` instead.
+</Aside>
+
+### Memory layout
+
+```
+union Value (size = 8, align = 8):
+┌─────────────────────────────────────────┐
+│          double d  (8 bytes)            │
+├─────────────────────────────────────────┤
+│  int i (4 bytes) │ (4 bytes padding)    │
+├─────────────────────────────────────────┤
+│  float f (4 bytes) │ (4 bytes padding)  │
+└─────────────────────────────────────────┘
+All members start at offset 0.
+```
+
+### Type-punning to inspect float bit pattern (C)
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+union FloatBits {
+    float    f;
+    uint32_t u;
+};
+
+int main(void) {
+    union FloatBits fb = { .f = -1.0f };
+    printf("0x%08X\n", fb.u);  /* 0xBF800000 */
+}
+```
+
+This is legal in C. In C++, write `uint32_t u; memcpy(&u, &fb.f, 4);` for the same result without UB.
+
+---
+
+## Tagged Unions (Discriminated Unions)
+
+The standard pattern: pair a union with a tag that records which member is active.
+
+```c
+#include <stdbool.h>
+#include <string.h>
+
+typedef enum {
+    TAG_INT,
+    TAG_FLOAT,
+    TAG_STR,
+} ValueTag;
+
+typedef struct {
+    ValueTag tag;
+    union {
+        int   i;
+        float f;
+        char  s[32];
+    } as;
+} Value;
+
+void printValue(const Value *v) {
+    switch (v->tag) {
+    case TAG_INT:   printf("int: %d\n",   v->as.i); break;
+    case TAG_FLOAT: printf("float: %f\n", v->as.f); break;
+    case TAG_STR:   printf("str: %s\n",   v->as.s); break;
+    }
+}
+
+int main(void) {
+    Value a = { .tag = TAG_INT,   .as.i = 42 };
+    Value b = { .tag = TAG_FLOAT, .as.f = 3.14f };
+    Value c = { .tag = TAG_STR };
+    strncpy(c.as.s, "hello", sizeof c.as.s - 1);
+    c.tag = TAG_STR;
+
+    printValue(&a);
+    printValue(&b);
+    printValue(&c);
+}
+```
+
+This is functionally equivalent to Rust's `enum` with data variants or Haskell's algebraic data types — the difference is C gives you no compiler-enforced exhaustiveness check.
+
+### Anonymous unions (C11)
+
+```c
+struct Packet {
+    uint8_t type;
+    union {         /* no member name — fields promoted to outer struct */
+        uint16_t port;
+        uint32_t address;
+    };
+};
+
+struct Packet p;
+p.type    = 1;
+p.address = 0xC0A80101;  /* accessed directly, no .u. prefix */
+```
+
+<Aside type="caution">
+  Anonymous unions are a C11 feature. Some older C89/C90 codebases use a
+  compiler extension `__extension__` or simply name the union member. Always
+  check your `-std` flag.
+</Aside>
+
+---
+
+## Common Pitfalls
+
+| Pitfall                       | Description                                                              | Fix                                                              |
+| ----------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Reading inactive member (C++) | UB in C++, defined only in C                                             | Use `memcpy` for type-punning in C++                             |
+| Enum overflow                 | Assigning a value outside the enumerator range is implementation-defined | Use explicit underlying type (C23) or `int` with `#define` flags |
+| Union alignment               | Smaller member at offset 0, but struct containing union may need padding | Use `offsetof` / `sizeof` to verify layout                       |
+| Missing default in switch     | New enumerator added later will silently fall through                    | Always add `default:` or enable `-Wswitch`                       |
