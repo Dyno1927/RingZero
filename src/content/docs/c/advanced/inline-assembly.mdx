@@ -1,0 +1,120 @@
+---
+title: "Inline Assembly (asm)"
+description: Extended GNU inline assembly syntax, operands, constraints, clobbers, CPUID, and instruction cycle measurement.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In low-level systems programming, operating system kernels, device drivers, and hyper-optimized cryptographic routines frequently require executing CPU-specific instructions not exposed by standard C syntax. GCC and Clang provide **Extended Inline Assembly** (`__asm__ __volatile__`) to interface machine instructions directly with C expressions.
+
+---
+
+## The Extended ASM Syntax
+
+The standard GNU inline assembly block structure is:
+
+```c
+__asm__ __volatile__ (
+    "instruction template"
+    : output_operands    /* Constraints on C variables receiving results */
+    : input_operands     /* Constraints on C expressions passed to assembly */
+    : clobbers           /* Registers or memory modified as side-effects */
+);
+```
+
+### Why `__volatile__` is Critical
+
+Without `__volatile__`, optimizing compilers treat the assembly statement as a pure function of its inputs. If the outputs are unused, or if the compiler assumes the result is invariant, it may **delete or reorder the entire assembly block**. Adding `__volatile__` forces the compiler to execute the instructions exactly where written.
+
+---
+
+## Constraints & Modifiers
+
+Constraints tell the compiler where to place variables before executing the assembly string:
+
+| Constraint   | Type         | Meaning                                                               |
+| :----------- | :----------- | :-------------------------------------------------------------------- |
+| `"r"`        | Register     | Allocate any general-purpose CPU register (`RAX`, `RBX`, `RCX`, etc.) |
+| `"m"`        | Memory       | Operates directly on the variable's RAM memory address operand        |
+| `"i"`        | Immediate    | Compile-time integer constant                                         |
+| `"a"`, `"d"` | Specific Reg | Force variable into `RAX`/`EAX` (`"a"`) or `RDX`/`EDX` (`"d"`)        |
+
+### Constraint Modifiers
+
+- `"="`: Write-only output operand (overwrites previous value).
+- `"+"`: Read-modify-write operand (reads input and updates output in place).
+- `"&"`: Early-clobber output (modified before all inputs are consumed; prevents reusing input registers).
+
+---
+
+## The Clobber List
+
+Clobbers inform the compiler about side-effects that the assembly instructions execute:
+
+1. **Specific Registers (`"rax"`, `"rcx"`, etc.)**: Warns the compiler that the instruction overwrites that register, preventing register allocation conflicts.
+2. **`"cc"`**: Indicates that the assembly instructions alter the CPU condition code flags (e.g. zero flag, carry flag).
+3. **`"memory"` (Compiler Memory Barrier)**: Informs the optimizer that the assembly reads or writes arbitrary memory addresses. The compiler flushes cached registers to RAM and reloads variables after the assembly statement.
+
+---
+
+## Practical Systems Examples
+
+### 1. Cycle Counter Measurement (`rdtsc`)
+
+Reading the x86 hardware Time Stamp Counter (TSC) for microsecond latency benchmarking:
+
+```c
+#include <stdint.h>
+
+static inline uint64_t rdtsc(void) {
+    uint32_t lo, hi;
+    // rdtsc writes lower 32 bits into EAX, upper 32 bits into EDX
+    __asm__ __volatile__ (
+        "rdtsc"
+        : "=a" (lo), "=d" (hi)
+    );
+    return ((uint64_t)hi << 32) | lo;
+}
+```
+
+### 2. Spinlock CPU Hint (`pause`)
+
+In busy-wait spinlocks, executing `pause` prevents CPU pipeline memory order violations and dramatically reduces power dissipation:
+
+```c
+static inline void cpuRelax(void) {
+    __asm__ __volatile__ ("pause" ::: "memory");
+}
+```
+
+### 3. Hardware Feature Detection (`cpuid`)
+
+Querying CPU vendor and architectural instruction support:
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+void getCpuVendor(char vendor[13]) {
+    uint32_t eax = 0, ebx, ecx, edx;
+
+    __asm__ __volatile__ (
+        "cpuid"
+        : "=b" (ebx), "=c" (ecx), "=d" (edx)
+        : "a" (eax)
+    );
+
+    // Copy register bytes into output string buffer
+    *(uint32_t *)(vendor + 0) = ebx;
+    *(uint32_t *)(vendor + 4) = edx;
+    *(uint32_t *)(vendor + 8) = ecx;
+    vendor[12] = '\0';
+}
+
+int main(void) {
+    char vendor[13];
+    getCpuVendor(vendor);
+    printf("CPU Vendor: %s\n", vendor); // "GenuineIntel" or "AuthenticAMD"
+    return 0;
+}
+```

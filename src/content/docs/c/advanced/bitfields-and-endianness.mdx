@@ -1,0 +1,139 @@
+---
+title: "Bitfields, Bit Manipulation & Endianness"
+description: Memory layout of C bitfields, implementation-defined padding, network vs host byte order, and hardware register packing.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Systems code interacts directly with physical hardware registers, network packet headers, and compact binary serialization formats. Mastering bitwise operations, understanding byte endianness, and navigating the portability traps of C struct bitfields are foundational systems programming skills.
+
+---
+
+## Endianness: Little-Endian vs Big-Endian
+
+**Endianness** defines the sequential order in which multi-byte integers are stored in physical memory addresses:
+
+- **Little-Endian (x86-64, AMD64, ARM default)**: The **least significant byte (LSB)** is stored at the lowest memory address.
+- **Big-Endian (Network Byte Order, IBM z/Architecture, older MIPS/SPARC)**: The **most significant byte (MSB)** is stored at the lowest memory address.
+
+### Byte Representation of `0x12345678` (uint32_t)
+
+```text
+Memory Address:    0x1000   0x1001   0x1002   0x1003
+Little-Endian:      0x78     0x56     0x34     0x12   (Lowest byte first)
+Big-Endian:         0x12     0x34     0x56     0x78   (Highest byte first)
+```
+
+### Runtime Endianness Detection
+
+```c
+#include <stdint.h>
+#include <stdbool.h>
+
+bool isLittleEndian(void) {
+    uint16_t test = 0x0001;
+    // Inspect the first byte in memory
+    return *((uint8_t *)&test) == 0x01;
+}
+```
+
+---
+
+## Byte Swapping & Network Order Conversions
+
+The Internet Protocol suite (TCP/IP) mandates **big-endian** encoding across the wire. Standard POSIX conversion functions guarantee portability:
+
+| Function          | Source to Destination | Description                          |
+| :---------------- | :-------------------- | :----------------------------------- |
+| `htons(uint16_t)` | Host to Network       | 16-bit integer (e.g. port numbers)   |
+| `htonl(uint32_t)` | Host to Network       | 32-bit integer (e.g. IPv4 addresses) |
+| `ntohs(uint16_t)` | Network to Host       | 16-bit integer conversion            |
+| `ntohl(uint32_t)` | Network to Host       | 32-bit integer conversion            |
+
+On modern little-endian systems, these functions compile down to dedicated single-cycle CPU instructions (`bswap` on x86, `rev` on ARM):
+
+```c
+#include <arpa/inet.h>
+#include <stdint.h>
+
+// 64-bit byte-swapping using GCC/Clang builtins
+uint64_t hostToNetwork64(uint64_t val) {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    return __builtin_bswap64(val);
+#else
+    return val;
+#endif
+}
+```
+
+---
+
+## Idiomatic Bit Manipulation
+
+Working with packed flags and hardware registers relies on bitwise mask operations:
+
+```c
+#include <stdint.h>
+
+#define FLAG_RUNNING  (1U << 0) // 0x01 (Bit 0)
+#define FLAG_PAUSED   (1U << 1) // 0x02 (Bit 1)
+#define FLAG_ERROR    (1U << 2) // 0x04 (Bit 2)
+#define FLAG_NETWORK  (1U << 3) // 0x08 (Bit 3)
+
+// 1. Setting a bit
+void setFlag(uint32_t *state, uint32_t flag) {
+    *state |= flag;
+}
+
+// 2. Clearing a bit
+void clearFlag(uint32_t *state, uint32_t flag) {
+    *state &= ~flag;
+}
+
+// 3. Toggling a bit
+void toggleFlag(uint32_t *state, uint32_t flag) {
+    *state ^= flag;
+}
+
+// 4. Testing a bit
+bool isSet(uint32_t state, uint32_t flag) {
+    return (state & flag) != 0;
+}
+```
+
+---
+
+## Bitfields in C Structs & Their Portability Trap
+
+C allows declaring bitfield members that occupy a specified number of bits:
+
+```c
+struct IPHeaderBitfield {
+    unsigned int version : 4;  // 4 bits
+    unsigned int ihl     : 4;  // 4 bits
+    unsigned int tos     : 8;  // 8 bits
+    unsigned int len     : 16; // 16 bits
+};
+```
+
+<Aside type="danger" title="Never use bitfields for network packets or disk serialization">
+The ISO C standard explicitly states that the layout and ordering of bitfields within an allocation unit is **implementation-defined**:
+1. **Ordering**: Some compilers pack bits from lowest (LSB) to highest (MSB); others pack from highest to lowest.
+2. **Alignment & Padding**: The compiler may insert internal padding bytes between bitfields of different base types.
+3. **No Address Operator**: You cannot take the address of a bitfield (`&header.version` is a compiler error).
+
+In network protocols and drivers, **always use integer types with explicit shifts and bitwise masks**, never C bitfields.
+
+</Aside>
+
+### Recommended Systems Pattern: Explicit Bit Extraction
+
+```c
+#include <stdint.h>
+
+// Safe, portable extraction from raw network byte
+uint8_t rawByte = 0x45; // IPv4, Header Length 5 (20 bytes)
+
+uint8_t version = (rawByte >> 4) & 0x0F; // Extract upper 4 bits
+uint8_t ihl     = rawByte & 0x0F;        // Extract lower 4 bits
+```

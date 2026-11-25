@@ -114,6 +114,24 @@ export default defineConfig({
                 },
               ],
             },
+            {
+              label: "Advanced Systems C",
+              collapsed: true,
+              items: [
+                {
+                  label: "Bitfields & Endianness",
+                  slug: "c/advanced/bitfields-and-endianness",
+                },
+                {
+                  label: "Inline Assembly (asm)",
+                  slug: "c/advanced/inline-assembly",
+                },
+                {
+                  label: "VLAs vs Stack Allocation",
+                  slug: "c/advanced/stack-allocation",
+                },
+              ],
+            },
           ],
         },
         {

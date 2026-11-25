@@ -1,0 +1,101 @@
+---
+title: "VLAs vs Stack Allocation (alloca)"
+description: Variable-length arrays, alloca stack frame pointer manipulation, security hazards, and stack overflow prevention.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Allocating memory on the call stack is orders of magnitude faster than heap allocation (`malloc`), as it requires only a subtraction of the CPU stack pointer (`RSP`). However, allocating dynamically-sized buffers on the stack introduces catastrophic vulnerabilities: stack overflows, memory corruption, and security exploits.
+
+---
+
+## Variable-Length Arrays (VLAs)
+
+Introduced in C99 (and made optional in C11 Annex B), **Variable-Length Arrays** allow declaring array bounds evaluated at runtime:
+
+```c
+void processPacket(size_t len) {
+    uint8_t buffer[len]; // VLA: Size determined at runtime!
+    // ...
+}
+```
+
+### Why the Linux Kernel Banned VLAs
+
+In 2018, the Linux kernel banned VLAs entirely across the entire codebase (`-Wvla` compiler flag). The reasons are structural:
+
+1. **No Failure Reporting**: A heap allocation reports exhaustion by returning `NULL`. A VLA that exceeds the stack boundary instantly crashes the process with `SIGSEGV` or triggers a kernel panic.
+2. **Security Exploitation (Stack Clash)**: If `len` is controlled by user input or network data, an attacker can specify a huge integer to bypass stack guard pages and overwrite adjacent thread stacks or heap memory.
+3. **Suboptimal Code Generation**: The compiler cannot calculate fixed stack offsets at compile time, forcing it to generate extra instructions to maintain a dedicated frame pointer (`RBP`) on every function call.
+
+---
+
+## Dynamic Stack Allocation via `alloca()`
+
+The `alloca()` function dynamically allocates memory directly from the caller's stack frame:
+
+```c
+#include <alloca.h>
+
+void executeTask(size_t n) {
+    int *arr = (int *)alloca(n * sizeof(int));
+    // Memory is automatically released when executeTask returns
+}
+```
+
+### The Loop Expansion Hazard
+
+<Aside type="danger" title="alloca() Inside Loops">
+Unlike VLAs (whose scope is bounded by their enclosing block), memory allocated with `alloca()` remains allocated until the **enclosing function returns**. Calling `alloca()` inside a loop accumulates stack consumption on every iteration:
+
+```c
+// DANGEROUS: Stack overflow hazard!
+void parseTokens(int iterations) {
+    for (int i = 0; i < iterations; ++i) {
+        // Allocates new stack memory on EVERY iteration!
+        // Memory is NOT freed at loop end; stack blows up!
+        char *scratch = alloca(4096);
+    }
+}
+```
+
+</Aside>
+
+---
+
+## Recommended Pattern: Small Buffer Optimization (SBO)
+
+In production systems where allocations are typically small but can occasionally be large, use a **stack scratchpad with heap fallback**:
+
+```c
+#include <stdlib.h>
+#include <stdint.h>
+
+#define STACK_SCRATCH_SIZE 512
+
+void processData(const uint8_t *input, size_t len) {
+    uint8_t stack_buf[STACK_SCRATCH_SIZE];
+    uint8_t *buf = stack_buf;
+    bool heap_allocated = false;
+
+    // Fast path: use stack buffer for typical workloads
+    // Slow path: fallback to heap malloc for large spikes
+    if (len > STACK_SCRATCH_SIZE) {
+        buf = (uint8_t *)malloc(len);
+        if (!buf) {
+            // Safe error handling possible!
+            return;
+        }
+        heap_allocated = true;
+    }
+
+    // Process data safely using buf...
+
+    // Deterministic cleanup
+    if (heap_allocated) {
+        free(buf);
+    }
+}
+```
+
+This pattern provides the zero-cost latency of stack allocation for 99% of requests while eliminating stack exhaustion vulnerabilities completely.
