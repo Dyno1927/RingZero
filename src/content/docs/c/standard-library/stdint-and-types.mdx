@@ -1,0 +1,139 @@
+---
+title: "<stdint.h>, <stddef.h> & Data Models"
+description: Fixed-width integer taxonomy, pointer-sized integers, data model architectures (LP64 vs LLP64), size_t, and offsetof.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+Writing portable systems code requires understanding the target hardware and operating system **data model**. C's built-in types (`short`, `int`, `long`) have variable sizes depending on the compiler ABI. The `<stdint.h>` and `<stddef.h>` headers establish fixed-width integer guarantees, pointer conversion types, and structure alignment introspection.
+
+---
+
+## Architecture Data Models: LP64 vs LLP64
+
+When transitioning between 32-bit and 64-bit platforms, different operating systems made different choices regarding standard type sizes:
+
+| Type              | ILP32 (32-bit Linux / Windows) | LP64 (64-bit Linux / macOS / BSD) | LLP64 (64-bit Windows) |
+| :---------------- | :----------------------------- | :-------------------------------- | :--------------------- |
+| `char`            | 8 bits                         | 8 bits                            | 8 bits                 |
+| `short`           | 16 bits                        | 16 bits                           | 16 bits                |
+| `int`             | 32 bits                        | 32 bits                           | 32 bits                |
+| `long`            | **32 bits**                    | **64 bits**                       | **32 bits**            |
+| `long long`       | 64 bits                        | 64 bits                           | 64 bits                |
+| Pointer (`void*`) | **32 bits**                    | **64 bits**                       | **64 bits**            |
+
+<Aside type="danger" title="The long Portability Hazard">
+  Never assume `long` is 64 bits. On 64-bit Linux, `sizeof(long) == 8`. On
+  64-bit Windows (MSVC), `sizeof(long) == 4`. Casting a 64-bit pointer to `long`
+  on Windows truncates the upper 32 bits, corrupting memory addresses.
+</Aside>
+
+---
+
+## `<stdint.h>`: Fixed-Width Integers
+
+To eliminate architectural ambiguity, C99 introduced `<stdint.h>`:
+
+### 1. Exact-Width Types
+
+Guaranteed to have exactly N bits and two's complement representation:
+
+- `int8_t`, `int16_t`, `int32_t`, `int64_t`
+- `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`
+
+### 2. Pointer-Sized Integers: `intptr_t` & `uintptr_t`
+
+An integer type guaranteed to be wide enough to hold a converted `void*` address without loss of precision:
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+void inspectPointerAlignment(void *ptr) {
+    uintptr_t addr = (uintptr_t)ptr;
+
+    // Check if pointer is 64-byte cache line aligned
+    if ((addr & 0x3F) == 0) {
+        printf("Pointer %p is aligned to 64-byte cache line boundary\n", ptr);
+    }
+}
+```
+
+### 3. Greatest-Width Types: `intmax_t` & `uintmax_t`
+
+Hold the largest integer value the compiler toolchain supports.
+
+---
+
+## `<stddef.h>`: Core Systems Typedefs
+
+`<stddef.h>` provides fundamental types required for memory management and structure introspection:
+
+### `size_t` & `ptrdiff_t`
+
+- `size_t`: Unsigned integer representing the size in bytes of any object in memory. It is the type returned by the `sizeof` and `alignof` operators.
+- `ptrdiff_t`: Signed integer representing the result of subtracting two pointers pointing to elements of the same array:
+  ```c
+  int arr[10];
+  ptrdiff_t diff = &arr[8] - &arr[2]; // diff == 6
+  ```
+
+### Structural Introspection: `offsetof()`
+
+The `offsetof` macro computes the byte offset of a member from the start of its enclosing structure:
+
+```c
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+struct PacketHeader {
+    uint8_t  version;    // Offset 0 (1 byte)
+    // 3 bytes padding inserted by compiler for 4-byte alignment
+    uint32_t sequence;   // Offset 4 (4 bytes)
+    uint64_t timestamp;  // Offset 8 (8 bytes)
+};
+
+int main(void) {
+    printf("Offset of sequence: %zu\n", offsetof(struct PacketHeader, sequence));   // 4
+    printf("Offset of timestamp: %zu\n", offsetof(struct PacketHeader, timestamp)); // 8
+    return 0;
+}
+```
+
+### The `container_of` Idiom
+
+The Linux kernel builds on `offsetof` to retrieve the parent structure containing an embedded node (e.g., in intrusive linked lists):
+
+```c
+#define container_of(ptr, type, member) \
+    ((type *)((char *)(ptr) - offsetof(type, member)))
+```
+
+---
+
+## Integer Promotion & Overflow Rules
+
+### Unsigned Wrap vs Signed Overflow
+
+In ISO C:
+
+- **Unsigned integer arithmetic**: Guaranteed to wrap modulo 2^N. It is never undefined behavior.
+  ```c
+  uint8_t val = 255;
+  val += 1; // Well-defined: val is now 0
+  ```
+- **Signed integer overflow**: **Undefined Behavior**. Optimizing compilers assume signed arithmetic never overflows, and will delete overflow boundary checks:
+
+  ```c
+  // DANGEROUS: Compiler optimizes this check away!
+  // It assumes (x + 1 > x) is always true because signed overflow is UB!
+  if (x + 1 < x) {
+      handle_overflow();
+  }
+
+  // CORRECT: Check bounds before performing arithmetic
+  if (x > INT_MAX - 1) {
+      handle_overflow();
+  }
+  ```

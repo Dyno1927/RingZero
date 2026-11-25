@@ -1,0 +1,175 @@
+---
+title: "<stdlib.h> & Process Utilities"
+description: Safe numeric conversions, process termination contracts, environment variables, and sorting algorithms in C.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The `<stdlib.h>` header defines general utility functions spanning numeric conversions, pseudo-random sequence generation, searching and sorting, and process termination. Systems code requires strict discipline when utilizing these functions to prevent security flaws and undefined behavior.
+
+---
+
+## Safe Numeric Conversions: `strtol` vs `atoi`
+
+Legacy functions `atoi()`, `atol()`, and `atof()` are fundamentally broken for production systems:
+
+1. They cannot report parsing failures (returning `0` on invalid input, indistinguishable from the valid string `"0"`).
+2. They do not report where parsing stopped.
+3. If the value overflows the destination type, their behavior is **Undefined Behavior**.
+
+### The Safe `strtol` Idiom
+
+Use `strtol()`, `strtoll()`, or `strtoul()` to validate numeric input exhaustively:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
+
+bool parsePort(const char *str, int *outPort) {
+    if (!str || *str == '\0') return false; // Reject empty input
+
+    char *endptr = NULL;
+    errno = 0; // Mandatory: strtol does not clear errno on success
+
+    long val = strtol(str, &endptr, 10); // Base 10 conversion
+
+    // 1. Check for overflow / underflow
+    if (errno == ERANGE || val > 65535 || val < 1) {
+        return false;
+    }
+
+    // 2. Check if any digits were consumed
+    if (endptr == str) {
+        return false; // Not a number
+    }
+
+    // 3. Check for trailing garbage characters (e.g. "8080abc")
+    if (*endptr != '\0') {
+        return false; // Trailing invalid input
+    }
+
+    *outPort = (int)val;
+    return true;
+}
+```
+
+Passing `base = 0` allows `strtol` to automatically recognize prefixes: `0x` for hexadecimal, `0` for octal, and decimal otherwise.
+
+---
+
+## Process Termination Mechanics
+
+C provides several distinct functions to terminate a process, each with different cleanup guarantees:
+
+```text
+                                 exit()   quick_exit()   _Exit()   abort()
+Stdio streams flushed & closed:   YES         NO           NO        NO
+atexit() callbacks executed:      YES         NO           NO        NO
+at_quick_exit() executed:         NO          YES          NO        NO
+Raises SIGABRT signal:            NO          NO           NO        YES
+Generates core dump:              NO          NO           NO        YES
+```
+
+### 1. `exit(status)`
+
+Flushes and closes all open `FILE*` streams, removes temporary files created by `tmpfile()`, and calls functions registered via `atexit()` in reverse order of registration (LIFO).
+
+```c
+void cleanup_scratch(void) {
+    unlink("/tmp/session.lock");
+}
+
+int main(void) {
+    atexit(cleanup_scratch);
+    // ...
+    exit(EXIT_SUCCESS); // Invokes cleanup_scratch() before process dies
+}
+```
+
+### 2. `_Exit(status)` (C99) / `_exit(status)` (POSIX)
+
+Terminates the process immediately without running `atexit()` hooks or flushing standard I/O buffers.
+
+<Aside type="danger" title="fork() and exit() Hazard">
+  After calling `fork()` on Linux/POSIX, if the child process encounters an
+  error, it **must** terminate with `_exit()` or `_Exit()`, never `exit()`.
+  Calling `exit()` inside the child flushes and tears down the duplicated
+  `FILE*` stream buffers inherited from the parent, causing duplicate output or
+  socket corruption in the parent process.
+</Aside>
+
+### 3. `abort()`
+
+Abruptly terminates the process by raising `SIGABRT`. It does not flush buffers or execute `atexit()` handlers. If the signal is not caught, it produces a core dump for post-mortem debugging.
+
+---
+
+## Searching and Sorting: `qsort` & `bsearch`
+
+Standard C provides `qsort()` for sorting generic contiguous arrays in memory:
+
+```c
+void qsort(void *base, size_t nmemb, size_t size,
+           int (*compar)(const void *, const void *));
+```
+
+### The Subtraction Comparator Bug
+
+A common pitfall is writing integer comparators using arithmetic subtraction:
+
+```c
+// BUG: Prone to signed integer overflow (Undefined Behavior)!
+int badCompare(const void *a, const void *b) {
+    int ia = *(const int*)a;
+    int ib = *(const int*)b;
+    return ia - ib; // If ia = INT_MIN (-2147483648) and ib = 1, OVERFLOW!
+}
+
+// CORRECT: Explicit comparisons enforce strict weak ordering safely
+int safeCompare(const void *a, const void *b) {
+    int ia = *(const int*)a;
+    int ib = *(const int*)b;
+    if (ia < ib) return -1;
+    if (ia > ib) return 1;
+    return 0;
+}
+```
+
+### Binary Search with `bsearch()`
+
+`bsearch()` requires that the input array is **already sorted** matching the exact comparator:
+
+```c
+int key = 42;
+int *found = bsearch(&key, array, count, sizeof(int), safeCompare);
+if (found) {
+    // Pointer to matching element in array
+}
+```
+
+---
+
+## Environment & Randomness
+
+### `getenv()`
+
+Queries the process environment block. It returns a pointer to an internal null-terminated string, which must never be modified directly:
+
+```c
+const char *cfg = getenv("CONFIG_PATH");
+if (cfg != NULL) {
+    // Copy into local buffer before another thread calls setenv()
+}
+```
+
+### `rand()` Limitations in Systems Code
+
+`rand()` and `srand()` from `<stdlib.h>` implement a linear congruential generator (LCG). They:
+
+- Suffer from poor distribution in lower-order bits.
+- Are not thread-safe in early standard implementations.
+- Are completely insecure for cryptographic tokens, session keys, or network nonces.
+
+In Linux systems programming, obtain cryptographically secure random bytes via `getrandom(2)` or reading from `/dev/urandom`.

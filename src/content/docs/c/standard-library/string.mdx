@@ -1,0 +1,143 @@
+---
+title: "<string.h> & Byte Blocks"
+description: Memory block operations, pointer aliasing with restrict, memcpy vs memmove overlap UB, memset elision, and safe string routines.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The `<string.h>` header provides two fundamentally different categories of memory routines:
+
+1. **Byte Block Operations (`mem*`)**: Treat memory as raw contiguous arrays of `unsigned char`, executing for a fixed count of bytes regardless of content.
+2. **Null-Terminated String Operations (`str*`)**: Scan sequentially until a terminating null byte (`'\0'`) is encountered.
+
+Systems programmers prioritize `mem*` operations for predictability, speed, and avoiding buffer overruns caused by missing null terminators.
+
+---
+
+## `memcpy` vs `memmove`: Overlap & `restrict`
+
+The formal signatures in ISO C reveal a critical architectural distinction:
+
+```c
+void *memcpy(void *restrict dest, const void *restrict src, size_t n);
+void *memmove(void *dest, const void *src, size_t n);
+```
+
+### The `restrict` Contract in `memcpy`
+
+The `restrict` type qualifier promises the compiler that `dest` and `src` do not alias: they point to completely disjoint regions of physical memory. This allows the compiler to generate vectorized SIMD instructions (AVX-512, NEON) that copy 32 or 64 bytes at a time in unrolled bursts.
+
+<Aside type="danger" title="Undefined Behavior on Overlap">
+  Calling `memcpy()` when `dest` and `src` overlap is **Undefined Behavior**. On
+  modern CPU architectures with out-of-order execution and aggressive compiler
+  loop vectorization, overlapping `memcpy` corrupts source data during copy.
+</Aside>
+
+### When to Use `memmove`
+
+`memmove()` handles overlapping memory blocks safely by checking pointer addresses:
+
+- If `dest < src`: Copies forward from the beginning.
+- If `dest > src`: Copies backward from the end.
+
+```c
+#include <string.h>
+
+char buffer[32] = "0123456789";
+
+// SHIFTING ELEMENTS: Memory regions overlap!
+// Source: buffer + 2 ("23456789")
+// Destination: buffer ("0123456789")
+memmove(buffer, buffer + 2, 8); // Safe and defined
+buffer[8] = '\0';
+```
+
+---
+
+## `memset` & Compiler Dead Store Elimination
+
+`memset()` fills a memory region with a specified byte value:
+
+```c
+void *memset(void *s, int c, size_t n);
+```
+
+### The Security Vulnerability: Elided `memset`
+
+When clearing sensitive credentials (private keys, passwords, cryptographic nonces) from the stack or heap before releasing memory:
+
+```c
+void authenticateUser(void) {
+    char secretKey[64];
+    deriveKey(secretKey);
+    verify(secretKey);
+
+    // SECURITY FLAW: Compiler optimizes this out!
+    memset(secretKey, 0, sizeof(secretKey));
+}
+```
+
+Under optimization flags (`-O2` or `-O3`), the compiler's **Dead Store Elimination** pass observes that `secretKey` is never read again before the function returns. The compiler completely deletes the `memset()` call. The secret remains unscrubbed in stack memory.
+
+### Scrubbing Secrets Reliably
+
+To guarantee memory is scrubbed:
+
+1. **`explicit_bzero()` (glibc 2.25+ / BSD / POSIX.1-2024)**:
+   ```c
+   explicit_bzero(secretKey, sizeof(secretKey));
+   ```
+2. **`memset_s()` (C11 Annex K)**:
+   ```c
+   memset_s(secretKey, sizeof(secretKey), 0, sizeof(secretKey));
+   ```
+3. **Volatile Function Pointer Scrubbing**:
+   ```c
+   static void *(*volatile const volatile_memset)(void *, int, size_t) = memset;
+   volatile_memset(secretKey, 0, sizeof(secretKey));
+   ```
+
+---
+
+## Comparison: `memcmp` vs Timing Attacks
+
+`memcmp()` compares two blocks byte by byte and returns early as soon as the first non-matching byte is found:
+
+```c
+int memcmp(const void *s1, const void *s2, size_t n);
+```
+
+In security systems (comparing HMAC signatures or authentication tokens), early-exit behavior creates a **timing side-channel vulnerability**: attackers measure response times in nanoseconds to deduce byte values one by one.
+
+For cryptographic comparisons, use constant-time comparison functions:
+
+```c
+#include <stddef.h>
+
+// Constant-time memory comparison: executes all N iterations unconditionally
+int constantTimeMemcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *p1 = (const unsigned char *)a;
+    const unsigned char *p2 = (const unsigned char *)b;
+    unsigned char result = 0;
+
+    for (size_t i = 0; i < n; ++i) {
+        result |= (p1[i] ^ p2[i]);
+    }
+    return result != 0;
+}
+```
+
+---
+
+## Bounded String Routines
+
+| Function               | Destination Bound Check         | Null-Termination Guarantee     | Recommended Replacement    |
+| :--------------------- | :------------------------------ | :----------------------------- | :------------------------- |
+| `strcpy(dst, src)`     | **No** (buffer overflow hazard) | Yes                            | `snprintf` or `strlcpy`    |
+| `strcat(dst, src)`     | **No** (buffer overflow hazard) | Yes                            | `snprintf`                 |
+| `strncpy(dst, src, n)` | Yes                             | **NO** (if source length >= n) | `snprintf`                 |
+| `strnlen(s, maxlen)`   | Yes (reads at most `maxlen`)    | Read-only                      | Native bounded string scan |
+
+<Aside type="tip" title="The strncpy Trap">
+`strncpy(dest, src, n)` was designed for fixed-width UNIX directory entries, not general string manipulation. If `strlen(src) >= n`, `strncpy` does **not** write a terminating null byte into `dest`, leaving `dest` non-terminated and prone to buffer overruns in subsequent `printf` calls.
+</Aside>

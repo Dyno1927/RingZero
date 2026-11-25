@@ -1,0 +1,168 @@
+---
+title: "<stdio.h> & Streams"
+description: FILE pointer architecture, user-space buffering modes, formatted I/O security, and POSIX interaction in C.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The `<stdio.h>` header provides buffered stream input and output in standard C. Systems programmers must understand that `FILE*` is not a kernel primitive: it is a **user-space buffering wrapper** layered over an operating system file descriptor.
+
+---
+
+## The Anatomy of `FILE*`
+
+In ISO C, `FILE` is an opaque typedef representing a stream. Under the Linux GNU C Library (glibc), `FILE` is defined as `struct _IO_FILE`, maintaining internal memory pointers and tracking kernel status:
+
+```text
+User Application
+      │  fputc(), fwrite(), fprintf()
+      ▼
+┌────────────────────────────────────────────────────────┐
+│ struct _IO_FILE (User-Space Memory)                    │
+│  ├── _IO_write_base ──► [Start of memory buffer]       │
+│  ├── _IO_write_ptr  ──► [Current write position]       │
+│  ├── _IO_write_end  ──► [End of buffer capacity]       │
+│  ├── _flags         ──► (EOF, error, buffering flags)   │
+│  └── _fileno        ──► Kernel File Descriptor (e.g. 1)│
+└───────────────────────────┬────────────────────────────┘
+                            │  write(2) syscall when buffer fills
+                            ▼
+               Linux Kernel (VFS / Socket / Disk)
+```
+
+On POSIX-compliant systems, you can extract the underlying OS integer file descriptor using `fileno()`:
+
+```c
+#include <stdio.h>
+
+FILE *fp = fopen("output.log", "w");
+if (fp) {
+    int fd = fileno(fp); // Underlying kernel descriptor (e.g., 3)
+    // Can now pass fd to fcntl(), epoll, or select
+    fclose(fp);
+}
+```
+
+---
+
+## Stream Buffering Modes
+
+Every `FILE*` operates in one of three buffering disciplines, defined by integer constants in `<stdio.h>`:
+
+| Constant | Buffering Discipline | Flush Trigger                                                                     | Default Stream                                                 |
+| :------- | :------------------- | :-------------------------------------------------------------------------------- | :------------------------------------------------------------- |
+| `_IONBF` | **Unbuffered**       | Every single character writes to the kernel immediately via `write(2)`.           | `stderr`                                                       |
+| `_IOLBF` | **Line-Buffered**    | Emits a syscall when a newline (`\n`) is encountered, or when the buffer fills.   | `stdout` (when attached to interactive TTY terminal)           |
+| `_IOFBF` | **Fully-Buffered**   | Sycall is delayed until the entire buffer (typically 4096 or 8192 bytes) is full. | `stdout` (when redirected to file or pipe), regular disk files |
+
+### Changing Buffering with `setvbuf()`
+
+You can control buffer behavior using `setvbuf()`.
+
+<Aside type="caution" title="Execution Timing Rule">
+  `setvbuf()` **must** be called immediately after opening the stream, before
+  **any** read, write, or seek operations are performed on it. Calling
+  `setvbuf()` after I/O has begun is undefined behavior.
+</Aside>
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    // 1. Disable stdout buffering completely (useful for real-time logging)
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    // 2. Allocate custom 64KB full buffer for high-throughput disk write
+    static char custom_buf[65536];
+    FILE *fp = fopen("large_archive.bin", "wb");
+    if (fp) {
+        setvbuf(fp, custom_buf, _IOFBF, sizeof(custom_buf));
+        // High-throughput writes here
+        fclose(fp);
+    }
+    return 0;
+}
+```
+
+---
+
+## Formatted I/O Safety & Format String Exploits
+
+### Format String Vulnerability
+
+Passing untrusted user input directly as the format argument to `printf` or `syslog` is a severe security vulnerability:
+
+```c
+// VULNERABLE TO ARBITRARY MEMORY READ/WRITE EXPLOITS:
+char user_input[256];
+fgets(user_input, sizeof(user_input), stdin);
+printf(user_input); // DANGER!
+
+// SECURE:
+printf("%s", user_input);
+```
+
+If `user_input` contains `%x`, `printf` reads data off the CPU registers and stack. If it contains `%n`, it writes the count of characters printed into an arbitrary memory address pointed to by a stack variable.
+
+### Buffer Overflows: `sprintf` vs `snprintf`
+
+- `gets()` was officially **removed** from the C language in C11 because it is impossible to prevent buffer overflow with it.
+- `sprintf()` does not take a destination size parameter and writes past the end of the destination array if formatted characters exceed capacity.
+- **Always use `snprintf()`**:
+
+```c
+#include <stdio.h>
+
+void constructPath(const char *dir, const char *file) {
+    char fullpath[256];
+    int needed = snprintf(fullpath, sizeof(fullpath), "%s/%s", dir, file);
+
+    // snprintf guarantees null-termination if sizeof(fullpath) > 0.
+    // It returns the total number of characters that WOULD have been written.
+    if (needed < 0 || (size_t)needed >= sizeof(fullpath)) {
+        // Output was truncated! Handle error safely.
+        fprintf(stderr, "Path truncation detected! Required: %d bytes\n", needed + 1);
+        return;
+    }
+}
+```
+
+---
+
+## Binary I/O: `fread` & `fwrite`
+
+`fread` and `fwrite` transfer raw contiguous blocks between user memory and the stream buffer:
+
+```c
+size_t fread(void *restrict ptr, size_t size, size_t nmemb, FILE *restrict stream);
+size_t fwrite(const void *restrict ptr, size_t size, size_t nmemb, FILE *restrict stream);
+```
+
+### The `nmemb` Return Value
+
+Both functions return the **number of successfully transferred items** (`nmemb`), **not** the number of bytes:
+
+```c
+uint32_t records[128];
+FILE *fp = fopen("records.db", "rb");
+if (fp) {
+    size_t items_read = fread(records, sizeof(uint32_t), 128, fp);
+    if (items_read < 128) {
+        if (feof(fp)) {
+            // Reached natural end of file
+        }
+        if (ferror(fp)) {
+            // Unrecoverable I/O error occurred
+            perror("fread failed");
+        }
+    }
+    fclose(fp);
+}
+```
+
+<Aside type="tip" title="Checking EOF vs Error">
+  Never use `while (!feof(fp))` as a loop condition. `feof()` only returns true
+  **after** a read attempt has already failed past the end of the stream.
+  Inspect the return count of `fread()` or `fgetc()` first, then check `feof()`
+  or `ferror()`.
+</Aside>

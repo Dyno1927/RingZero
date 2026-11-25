@@ -88,6 +88,32 @@ export default defineConfig({
                 },
               ],
             },
+            {
+              label: "Standard Library",
+              collapsed: true,
+              items: [
+                {
+                  label: "<stdio.h> & Streams",
+                  slug: "c/standard-library/stdio",
+                },
+                {
+                  label: "<stdlib.h> & Process Utilities",
+                  slug: "c/standard-library/stdlib",
+                },
+                {
+                  label: "<string.h> & Byte Blocks",
+                  slug: "c/standard-library/string",
+                },
+                {
+                  label: "<stdint.h> & Data Models",
+                  slug: "c/standard-library/stdint-and-types",
+                },
+                {
+                  label: "<errno.h> & Error Handling",
+                  slug: "c/standard-library/errno-and-errors",
+                },
+              ],
+            },
           ],
         },
         {

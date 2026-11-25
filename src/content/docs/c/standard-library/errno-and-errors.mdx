@@ -1,0 +1,145 @@
+---
+title: "<errno.h> & Error Handling"
+description: Thread-local errno architecture, standard error numbers, re-entrant error formatting, and static vs runtime assertions.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+System calls and standard library routines indicate failure through return values and the `<errno.h>` facility. Writing robust systems code requires understanding `errno`'s thread-local storage implementation, signal re-entrancy, and the distinction between runtime assertions and compile-time verification.
+
+---
+
+## The Thread-Local Architecture of `errno`
+
+In early C, `errno` was a global `extern int errno;` variable. In multithreaded systems, this caused severe race conditions where one thread's error would overwrite another's.
+
+### Modern Implementation
+
+In modern ISO C (C11 and newer) and POSIX, `errno` is a macro expanding to an lvalue expression returning a **thread-local storage** location:
+
+```c
+// Under glibc Linux:
+extern int *__errno_location(void);
+#define errno (*__errno_location())
+```
+
+Each OS thread possesses its own isolated `errno` variable. A failure in Thread A does not alter `errno` in Thread B.
+
+---
+
+## Golden Rules for `errno` Usage
+
+<Aside type="caution" title="System Call Contract">
+  1. Functions only set `errno` **when they fail**. Successful calls **never
+  clear** `errno` to zero. 2. Never check `errno` unless the function's return
+  code explicitly indicated failure (e.g., returned `-1` or `NULL`). 3. For
+  functions that return valid values that can match error indicators (such as
+  `strtol`), explicitly set `errno = 0` **before** calling the function.
+</Aside>
+
+```c
+#include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+void openConfig(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        // Safe: open() failed, errno is guaranteed to reflect the cause
+        if (errno == ENOENT) {
+            fprintf(stderr, "File does not exist: %s\n", path);
+        } else if (errno == EACCES) {
+            fprintf(stderr, "Permission denied: %s\n", path);
+        } else {
+            perror("open failed");
+        }
+    }
+}
+```
+
+---
+
+## Essential Systems Error Codes
+
+| Error Code               | Name                             | Meaning in Systems Code                                                                                                          |
+| :----------------------- | :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------- |
+| `EINTR`                  | Interrupted System Call          | A blocking syscall (e.g. `read`, `epoll_wait`) was interrupted by a signal handler before data arrived. **Must retry the call**. |
+| `EAGAIN` / `EWOULDBLOCK` | Resource Temporarily Unavailable | In non-blocking sockets or file descriptors, the operation would block. Loop back to event loop.                                 |
+| `ENOMEM`                 | Out of Memory                    | The operating system kernel refused to allocate virtual or physical memory.                                                      |
+| `EPIPE`                  | Broken Pipe                      | Writing to a socket or pipe whose reading end has been closed by the peer. Triggers `SIGPIPE`.                                   |
+| `EBADF`                  | Bad File Descriptor              | The descriptor is not open or not valid for the requested operation.                                                             |
+
+---
+
+## Thread-Safe Error Formatting: `strerror_r`
+
+- `perror(prefix)`: Prints `prefix: <error message>` directly to `stderr`.
+- `strerror(errnum)`: Converts `errno` into a readable string. **Not thread-safe** in older libraries because it returns a pointer to an internal static buffer.
+- `strerror_r()`: Thread-safe re-entrant variant that writes into a user-provided buffer.
+
+### The POSIX vs GNU `strerror_r` Divergence
+
+<Aside type="danger" title="API Signature Divergence">
+  Two mutually incompatible versions of `strerror_r` exist on Linux: - **POSIX
+  version**: Returns `int` (`0` on success, error number on failure). -
+  **GNU-specific version** (`_GNU_SOURCE` defined): Returns `char*` (which may
+  point to an internal immutable string in `.rodata` or the user buffer).
+</Aside>
+
+To ensure portable compilation:
+
+```c
+#define _POSIX_C_SOURCE 200809L
+#include <string.h>
+#include <stdio.h>
+
+void logError(int err) {
+    char errbuf[128];
+    // POSIX strerror_r writes into errbuf and returns int
+    if (strerror_r(err, errbuf, sizeof(errbuf)) == 0) {
+        fprintf(stderr, "Error: %s\n", errbuf);
+    }
+}
+```
+
+---
+
+## Runtime vs Compile-Time Assertions
+
+### Runtime Assertions: `<assert.h>`
+
+`assert(expression)` verifies program invariants during development. If the expression evaluates to false, it writes diagnostic info to `stderr` and calls `abort()`.
+
+```c
+#include <assert.h>
+
+void setBufferSize(size_t sz) {
+    // BUG: Never put code with side-effects in assert!
+    // assert(allocateBuffer(&buf, sz) == SUCCESS); // BROKEN when NDEBUG is set!
+
+    // CORRECT:
+    assert(sz > 0 && sz <= 1048576);
+}
+```
+
+Defining `#define NDEBUG` before including `<assert.h>` completely eliminates all `assert()` statements from production builds.
+
+### Compile-Time Assertions: `_Static_assert` (C11) / `static_assert` (C23)
+
+Compile-time assertions validate sizes, alignments, and preprocessor math with **zero runtime cost and zero binary bloat**:
+
+```c
+#include <assert.h>
+#include <stdint.h>
+
+struct NetworkPacket {
+    uint32_t magic;
+    uint16_t length;
+    uint16_t checksum;
+};
+
+// Validated by the compiler during parsing; aborts compilation if false:
+static_assert(sizeof(struct NetworkPacket) == 8,
+              "NetworkPacket struct must be exactly 8 bytes without unexpected padding");
+```
