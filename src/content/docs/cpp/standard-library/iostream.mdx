@@ -1,0 +1,164 @@
+---
+title: "<iostream> & Formatting"
+description: C++ stream architecture, streambuf internals, sync_with_stdio performance implications, std::format, and std::print.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The `<iostream>` library provides object-oriented stream abstractions for character input and output. While ubiquitous in introductory C++, systems programmers must understand its internal buffering layers, synchronization overheads, and modern C++20/C++23 zero-overhead replacements (`<format>` and `<print>`).
+
+---
+
+## Stream Architecture & the `streambuf` Layer
+
+C++ I/O is cleanly separated into two distinct layers:
+
+1. **Formatting Layer (`std::basic_ios`, `std::basic_ostream`, `std::basic_istream`)**: Parses data types, formats numbers into ASCII/Unicode characters, and manages stream state flags (`failbit`, `badbit`, `eofbit`).
+2. **Buffering Layer (`std::basic_streambuf`)**: Manages the raw character memory buffer and interfaces with the underlying operating system file descriptors.
+
+```text
+ User Code
+     │  operator<< (int, string)
+     ▼
+std::ostream (Formatting Layer)
+     │  overflow(), sputc(), xsputn()
+     ▼
+std::streambuf (Buffering Layer)
+     │  write(2) syscall when buffer fills
+     ▼
+Operating System Kernel (File Descriptor)
+```
+
+### The Three Internal Pointers of `streambuf`
+
+A `std::streambuf` manages an output sequence via three internal pointers:
+
+- `pbase()`: Pointer to the beginning of the write buffer.
+- `pptr()`: Pointer to the current write position.
+- `epptr()`: Pointer to the end of the write buffer (capacity limit).
+
+When `pptr() == epptr()`, the buffer is full. The stream invokes the virtual function `overflow()`, which flushes the characters to the destination via a kernel syscall (`write(2)` on POSIX) and resets `pptr()` to `pbase()`.
+
+---
+
+## `sync_with_stdio` & Performance Pitfalls
+
+By default, the C++ standard requires that standard streams (`std::cin`, `std::cout`, `std::cerr`) synchronize their internal buffers with the corresponding C `FILE*` streams (`stdin`, `stdout`, `stderr`).
+
+### The Hidden Synchronization Overhead
+
+To ensure that alternating calls to `std::cout << "A";` and `printf("B");` produce the deterministic output `"AB"` without interleaving, `std::cout` does not maintain its own independent buffer. Instead, every single character insertion is routed directly through the underlying C `FILE*` buffer lock and function calls.
+
+In high-throughput logging or data processing, this default behavior introduces severe CPU bottlenecks.
+
+### Decoupling C++ Streams
+
+To achieve maximum stream throughput, decouple the streams before performing any I/O:
+
+```cpp
+#include <iostream>
+
+void configureFastIO() {
+    // 1. Disable synchronization with C standard I/O streams
+    std::ios_base::sync_with_stdio(false);
+
+    // 2. Untie cin from cout (prevents automatic cout flush before cin reads)
+    std::cin.tie(nullptr);
+}
+```
+
+<Aside type="caution" title="Interleaving Hazard">
+  Once `sync_with_stdio(false)` is invoked, never mix C `stdio` (`printf`,
+  `fgets`, `putchar`) with C++ streams (`std::cout`, `std::cin`). Because both
+  subsystems now maintain independent, unsynchronized memory buffers, output
+  will be emitted out-of-order or corrupt.
+</Aside>
+
+---
+
+## `std::endl` vs `\n`
+
+A common mistake in C++ code is using `std::endl` for newline formatting:
+
+```cpp
+// ANTI-PATTERN in loops or high-frequency logging:
+for (int i = 0; i < 100000; ++i) {
+    std::cout << "Event: " << i << std::endl;
+}
+```
+
+`std::endl` performs two distinct actions:
+
+1. Inserts the newline character `'\n'`.
+2. Explicitly calls `std::flush()` on the underlying stream buffer, triggering a synchronous `write(2)` syscall to the OS kernel.
+
+Flushing on every line disables memory buffering completely and degrades performance by several orders of magnitude. In systems code, **always use `'\n'`** and allow the buffer to flush naturally.
+
+---
+
+## Stream State Flags
+
+C++ streams maintain bitmasks tracking stream integrity:
+
+| Bit Flag                 | Condition                                                                                      |
+| :----------------------- | :--------------------------------------------------------------------------------------------- |
+| `std::ios_base::goodbit` | No errors occurred; stream is ready for I/O.                                                   |
+| `std::ios_base::eofbit`  | Stream reached end-of-file during extraction.                                                  |
+| `std::ios_base::failbit` | Logical parsing error (e.g., extracted non-numeric string into an `int`). Stream remains open. |
+| `std::ios_base::badbit`  | Severe I/O error or stream buffer corruption. Integrity lost.                                  |
+
+```cpp
+int value = 0;
+if (!(std::cin >> value)) {
+    if (std::cin.eof()) {
+        // Stream closed by sender
+    } else if (std::cin.fail()) {
+        std::cin.clear(); // Clear error flags
+        std::cin.ignore(1024, '\n'); // Discard invalid characters
+    }
+}
+```
+
+---
+
+## Modern Replacements: C++20 `<format>` & C++23 `<print>`
+
+C++ streams suffer from significant drawbacks in systems programming:
+
+- **Code bloat**: Heavy templates and virtual function calls in `streambuf`.
+- **Global mutable state**: Manipulators like `std::hex` or `std::setprecision` permanently mutate stream state for subsequent calls.
+- **Allocation overhead**: Complex formatted output frequently allocates memory on the heap.
+
+### C++20 `std::format`
+
+`std::format` adopts Python/Rust-style format strings with **compile-time format string validation** using `consteval`:
+
+```cpp
+#include <format>
+#include <string>
+
+uint32_t ip = 0x7F000001;
+uint16_t port = 8080;
+
+// Type-safe, validated at compile-time, returns std::string
+std::string msg = std::format("Connected to 0x{:08X}:{}\n", ip, port);
+```
+
+### C++23 `std::print`
+
+`std::print` (and `std::println`) writes directly to standard output or OS files without passing through the intermediate `streambuf` layer or allocating a temporary `std::string`:
+
+```cpp
+#include <print>
+
+int main() {
+    uint64_t bytesTransferred = 1048576;
+    double durationSec = 0.042;
+
+    // Writes directly to stdout file descriptor with zero buffer bloat:
+    std::println("Throughput: {:.2f} MB/s", (bytesTransferred / 1e6) / durationSec);
+    return 0;
+}
+```
+
+In new systems code targeting C++20/C++23, prefer `<format>` and `<print>` over `<iostream>`.

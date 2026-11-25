@@ -1,0 +1,156 @@
+---
+title: Containers, Views & Algorithms
+description: Memory layout of std::vector, iterator invalidation rules, zero-copy views (string_view, span), and STL algorithm internals.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+The C++ Standard Template Library (STL) provides data structures and algorithms engineered around contiguous memory layout, value semantics, and generic iterators. Systems programming favors contiguous containers (`std::vector`, `std::array`) and non-owning views (`std::string_view`, `std::span`) to maximize CPU L1/L2 cache locality.
+
+---
+
+## `std::vector` Memory Anatomy
+
+On 64-bit systems, a `std::vector<T>` instance occupies exactly **24 bytes** of stack storage, consisting of three pointers:
+
+```text
+std::vector<T> stack instance (24 bytes):
+┌─────────────────────────┬─────────────────────────┬─────────────────────────┐
+│ T *begin                │ T *end                  │ T *end_of_storage       │
+└────────────┬────────────┴────────────┬────────────┴────────────┬────────────┘
+             │                         │                         │
+             ▼                         ▼                         ▼
+Heap:       [Element 0][Element 1]... [Next Free Slot] ........ [Capacity End]
+             ├──────── size() ─────────┤
+             ├────────────────────── capacity() ─────────────────┤
+```
+
+### Allocation & Growth Factor
+
+When `push_back()` is invoked and `size() == capacity()`, the vector must reallocate:
+
+1. Allocates a new contiguous buffer in heap memory.
+2. Moves (or copies if not `noexcept` movable) existing elements to the new buffer.
+3. Destructs the elements in the old buffer and frees old memory.
+4. Updates `begin`, `end`, and `end_of_storage`.
+
+Standard library implementations grow geometrically to guarantee O(1) amortized insertion:
+
+- **GCC (libstdc++) & Clang (libc++)**: Growth factor of **2.0** (`new_capacity = 2 * old_capacity`).
+- **MSVC**: Growth factor of **1.5** (`new_capacity = 1.5 * old_capacity`, allowing the allocator to reuse previously freed memory blocks later).
+
+### `reserve()` vs `resize()`
+
+| Operation          | Memory Allocation             | Element Construction     | `size()`   | `capacity()` |
+| :----------------- | :---------------------------- | :----------------------- | :--------- | :----------- |
+| `vec.reserve(100)` | Allocates for $\ge 100$ items | None (raw memory)        | Unchanged  | $\ge 100$    |
+| `vec.resize(100)`  | Allocates if needed           | Default-constructs items | Set to 100 | $\ge 100$    |
+
+In high-throughput loops, **always call `reserve()`** in advance to eliminate redundant reallocations and memory copies.
+
+---
+
+## Iterator Invalidation Rules
+
+Modifying a container can invalidate iterators, pointers, and references pointing to its elements. Operating on an invalidated iterator is **Undefined Behavior**.
+
+### Contiguous Containers (`std::vector`, `std::string`)
+
+- **Reallocation triggered** (`size() > capacity()` during insert/push): **ALL** iterators, pointers, and references to the container become invalid immediately.
+- **No reallocation** (`size() < capacity()`):
+  - Insertion: Invalidates iterators at and after the insertion point.
+  - Erasure (`vec.erase(it)`): Invalidates iterators at and after the erased element. Iterators before the point of erasure remain valid.
+
+```cpp
+std::vector<int> numbers = {1, 2, 3, 4, 5};
+
+// UNDEFINED BEHAVIOR: Iterator invalidated during loop!
+// for (auto it = numbers.begin(); it != numbers.end(); ++it) {
+//     if (*it == 3) numbers.push_back(10); // push_back may reallocate!
+// }
+
+// CORRECT IDIOM: Erase-remove idiom or C++20 std::erase
+std::erase(numbers, 3);
+```
+
+---
+
+## Zero-Copy Non-Owning Views
+
+Historically, passing read-only data across systems boundaries required copying into `std::string` or passing unwieldy `(const char *ptr, size_t len)` pairs. Modern C++ solves this with non-owning views.
+
+### `std::string_view` (C++17)
+
+A `std::string_view` is a 16-byte object containing:
+
+- `const char *data`: Pointer to the first character.
+- `size_t size`: Number of characters.
+
+It can view null-terminated C strings, `std::string` buffers, or slices of memory without performing dynamic allocation:
+
+```cpp
+#include <string_view>
+
+// Substrings are O(1) pointer arithmetic with ZERO heap allocation
+void parseHeader(std::string_view rawHeader) {
+    if (rawHeader.starts_with("HTTP/1.1")) {
+        std::string_view status = rawHeader.substr(9, 3);
+    }
+}
+```
+
+### `std::span` (C++20)
+
+`std::span<T>` generalizes `string_view` to any contiguous memory buffer (`uint8_t[]`, `std::vector<int>`, `std::array`):
+
+```cpp
+#include <span>
+#include <vector>
+
+void processNetworkBuffer(std::span<const uint8_t> packet) {
+    // packet.data(), packet.size(), packet.subspan(offset, count)
+}
+
+std::vector<uint8_t> dynamicBuf(1024);
+uint8_t stackBuf[256];
+
+processNetworkBuffer(dynamicBuf); // Views vector without copying
+processNetworkBuffer(stackBuf);   // Views stack array without copying
+```
+
+<Aside type="danger" title="Lifetime Hazard: Dangling Views">
+  A view does not own or manage the lifetime of its underlying memory. Creating
+  a view from a temporary object creates a dangling pointer when the temporary
+  is destroyed: ```cpp // FATAL: The temporary string returned by getPayload()
+  is destroyed // at the end of the full-expression! view is now dangling!
+  std::string_view view = getPayload().substr(0, 10); // Dereferencing view is
+  Undefined Behavior! ```
+</Aside>
+
+---
+
+## Algorithm Internals: `std::sort` vs C `qsort`
+
+The STL `<algorithm>` library is structured around iterators as pointers. Unlike C's `qsort`, which accepts a `void*` and an indirect comparator function pointer:
+
+```cpp
+// C qsort: Cannot inline comparator;
+// function pointer called for every element comparison:
+int cmp(const void *a, const void *b) {
+    return (*(const int*)a - *(const int*)b);
+}
+qsort(arr, len, sizeof(int), cmp);
+
+// C++ std::sort: Comparator lambda or operator< inlined completely into machine code:
+std::sort(vec.begin(), vec.end());
+```
+
+Because `std::sort` inlines the comparison logic directly, it consistently outperforms C `qsort` by **200% to 500%**.
+
+### Introsort Hybrid Architecture
+
+Under the hood, GCC's `std::sort` implements **Introsort** (Introspective Sort):
+
+1. **Quicksort**: Runs median-of-three quicksort partitioned recursively.
+2. **Heapsort Fallback**: If recursion depth exceeds `2 * floor(log2(N))` (preventing quadratic O(N^2) worst-case scenarios on pathological inputs), it switches to heapsort (O(N log N) worst-case guarantee).
+3. **Insertion Sort**: For partitions smaller than 16 elements, it finishes with insertion sort to leverage CPU cache locality and branch predictability.

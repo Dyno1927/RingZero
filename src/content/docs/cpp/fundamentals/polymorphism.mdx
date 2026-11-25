@@ -1,0 +1,259 @@
+---
+title: Polymorphism & Dynamic Dispatch
+description: Virtual functions, vtables, object memory layouts, virtual destructors, object slicing, and CRTP in C++.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+**Polymorphism** allows code to treat objects of different derived types through a common base interface. In C++, polymorphism manifests in two distinct forms:
+
+1. **Static polymorphism**: Resolved at compile time via templates, function overloading, and the Curiously Recurring Template Pattern (CRTP). Calls are inlined with zero runtime dispatch cost.
+2. **Dynamic polymorphism**: Resolved at runtime via virtual member functions and pointer/reference semantics. Calls are dispatched indirectly through compiler-generated virtual method tables (**vtables**).
+
+From a systems perspective, dynamic polymorphism trades CPU branch predictor resources and memory indirection for runtime extensibility.
+
+---
+
+## The Virtual Table (vtable) & vptr Architecture
+
+When a class declares or inherits at least one `virtual` function, the compiler inserts a hidden pointer into the object instance: the **vptr** (virtual table pointer).
+
+### Memory Layout Under the Itanium C++ ABI
+
+On Linux x86-64 (GCC and Clang), the `vptr` is placed at offset 0 of the object instance:
+
+```cpp
+class Device {
+public:
+    int id; // 4 bytes
+    // implicit 4 bytes padding for 8-byte alignment
+
+    virtual ~Device() = default;
+    virtual void reset();
+    virtual int read(char *buf, int len);
+};
+
+class StorageDevice : public Device {
+public:
+    uint64_t sectorCount; // 8 bytes
+
+    void reset() override;
+    int read(char *buf, int len) override;
+};
+```
+
+Object instances and their corresponding compiler tables occupy memory as follows:
+
+```text
+StorageDevice instance in heap or stack (24 bytes):
+┌───────────────────────────┬──────────────────────────────────────────────┐
+│ Offset 0..7  (8 bytes)    │ vptr ───► StorageDevice vtable in .rodata:   │
+│ Offset 8..11 (4 bytes)    │ id      ┌──────────────────────────────────┐ │
+│ Offset 12..15(4 bytes)    │ padding │ [0] &StorageDevice::~StorageDevice│ │
+│ Offset 16..23(8 bytes)    │ sector  │ [1] &StorageDevice::reset        │ │
+└───────────────────────────┴─────────┤ [2] &StorageDevice::read         │ │
+                                      └──────────────────────────────────┘ │
+```
+
+### The Assembly Cost of Dynamic Dispatch
+
+A non-virtual member call is direct (`call SymbolName`). A virtual call requires three instructions:
+
+```cpp
+void serviceDevice(Device *dev, char *buffer) {
+    dev->read(buffer, 4096);
+}
+```
+
+Disassembled under x86-64 GCC (`-O2`):
+
+```asm
+serviceDevice:
+    mov    rax, QWORD PTR [rdi]        ; 1. Load vptr from object offset 0
+    mov    edx, 4096                   ; Setup parameter 3 (len)
+    mov    rsi, rsi                    ; Parameter 2 (buffer) already in RSI
+    jmp    QWORD PTR [rax + 16]        ; 2. Indirect jump to vtable[2] (read)
+```
+
+The indirect branch `call *QWORD PTR [rax + 16]` cannot be inlined by the compiler unless whole-program analysis or profile-guided optimization (**PGO**) can prove the concrete runtime type (**devirtualization**). Furthermore, it relies heavily on the CPU branch target buffer (BTB).
+
+---
+
+## Pure Virtual Functions & Abstract Interfaces
+
+A virtual function declared with `= 0` is **pure virtual**. A class with at least one pure virtual function is an **abstract class** and cannot be directly instantiated.
+
+```cpp
+class IFileSystem {
+public:
+    virtual ~IFileSystem() = default;
+
+    virtual int open(const char *path, int flags) = 0;
+    virtual int close(int fd) = 0;
+    virtual int64_t seek(int fd, int64_t offset, int whence) = 0;
+};
+```
+
+<Aside
+  type="caution"
+  title="Never call virtual functions in constructors or destructors"
+>
+  During base class construction, the derived class subobject does not yet
+  exist. The compiler sets `vptr` to point to the **base class vtable**. Calling
+  a pure virtual function inside a base constructor triggers the
+  `__cxa_pure_virtual` handler, terminating the process immediately.
+</Aside>
+
+---
+
+## Mandatory Virtual Destructors
+
+If a class contains any virtual functions and is intended to be used polymorphically via a base pointer, its destructor **must be declared virtual**:
+
+```cpp
+class NetworkStream {
+public:
+    virtual ~NetworkStream() = default; // Mandatory virtual destructor
+    virtual void transmit(const uint8_t *data, size_t len) = 0;
+};
+
+class SecureStream : public NetworkStream {
+    uint8_t *sessionKey;
+
+public:
+    SecureStream() : sessionKey(new uint8_t[256]) {}
+    ~SecureStream() override {
+        delete[] sessionKey; // Released properly
+    }
+};
+```
+
+<Aside type="danger" title="Undefined Behavior without virtual destructors">
+  Deleting a derived object through a base pointer (`Base *b = new Derived();
+  delete b;`) when `Base` lacks a virtual destructor is **Undefined Behavior**
+  according to the ISO C++ standard ([expr.delete]). The compiler dispatches
+  only `~Base()`, leaking all resources held by `Derived` and triggering heap
+  corruption if derived state changes object alignment or size.
+</Aside>
+
+---
+
+## Object Slicing
+
+Object slicing occurs when a derived class instance is assigned or passed **by value** to a variable or parameter of base class type:
+
+```cpp
+void badInspect(Device dev) { // Passed by value!
+    // dev is ONLY the Device subobject.
+    // The StorageDevice members are sliced off!
+    // dev.vptr points to Device's vtable, not StorageDevice's!
+}
+
+StorageDevice disk;
+badInspect(disk); // Slices StorageDevice to Device
+```
+
+To preserve polymorphic behavior and avoid copying:
+
+1. Pass by `const Base&` (or `Base&`).
+2. Pass by smart pointer (`std::unique_ptr<Base>` or `std::shared_ptr<Base>`).
+
+---
+
+## `override` and `final` (C++11)
+
+Without `override`, minor signature mismatches silently create a brand new function rather than overriding the base virtual method:
+
+```cpp
+class Sensor {
+public:
+    virtual void calibrate(double target);
+};
+
+class AccelSensor : public Sensor {
+public:
+    // BUG without override: float != double creates a new overload!
+    void calibrate(float target);
+
+    // COMPILER ERROR with override: detects signature mismatch immediately:
+    // void calibrate(float target) override;
+};
+```
+
+The `final` specifier prevents further inheritance or virtual overrides. It also signals the compiler that devirtualization is 100% safe:
+
+```cpp
+class FastSensor final : public Sensor {
+public:
+    void calibrate(double target) override final;
+};
+```
+
+---
+
+## Multiple & Virtual Inheritance Layout
+
+When inheriting from multiple base classes, an object contains **multiple vptrs**, requiring `this` pointer adjustments during casting:
+
+```cpp
+class Stream { public: virtual void flush(); };
+class Reader { public: virtual void read(); };
+
+class StreamReader : public Stream, public Reader {
+public:
+    void flush() override;
+    void read() override;
+};
+```
+
+When casting `StreamReader*` to `Reader*`, the compiler adjusts the pointer forward by `sizeof(Stream)` so that `Reader`'s vptr sits at offset 0:
+
+```text
+StreamReader Instance:
+┌───────────────────────────┬──────────────────────────────────┐
+│ Offset 0: Stream vptr     │ Points to StreamReader Stream vtbl│
+├───────────────────────────┼──────────────────────────────────┤
+│ Offset 8: Reader vptr     │ Points to StreamReader Reader vtbl│
+└───────────────────────────┴──────────────────────────────────┘
+```
+
+In the diamond inheritance pattern (`A -> B, C -> D`), virtual inheritance (`class B : virtual public A`) collapses duplicated `A` subobjects into a single shared instance, indexed via **vbase_offset** entries in the vtable.
+
+---
+
+## Zero-Cost Static Polymorphism (CRTP)
+
+For high-throughput systems where indirect branches cannot be tolerated, the **Curiously Recurring Template Pattern** provides polymorphism resolved entirely at compile time:
+
+```cpp
+template <typename Derived>
+class PacketParser {
+public:
+    void parse(const uint8_t *data, size_t len) {
+        // Static dispatch: inlined directly by the compiler
+        static_cast<Derived*>(this)->processPayload(data, len);
+    }
+};
+
+class EthernetParser : public PacketParser<EthernetParser> {
+public:
+    void processPayload(const uint8_t *data, size_t len) {
+        // Direct execution without vptr, vtable, or heap indirection
+    }
+};
+
+template <typename T>
+void runPipeline(PacketParser<T> &parser, const uint8_t *buf, size_t sz) {
+    parser.parse(buf, sz);
+}
+```
+
+### Static vs Dynamic Trade-Offs
+
+| Metric                    | Dynamic (`virtual`)                     | Static (CRTP / Concepts)            |
+| :------------------------ | :-------------------------------------- | :---------------------------------- |
+| **Dispatch Mechanism**    | Indirect `call *vtable[N]`              | Direct / Inlined instructions       |
+| **Object Overhead**       | 8-byte `vptr` per instance              | 0 bytes added overhead              |
+| **Inlining Ability**      | Difficult (needs PGO/devirt)            | Always inlined                      |
+| **Binary Size**           | Compact                                 | Template code bloat per type        |
+| **Runtime Extensibility** | Load plugins (`dlopen`), dynamic arrays | Types must be known at compile time |

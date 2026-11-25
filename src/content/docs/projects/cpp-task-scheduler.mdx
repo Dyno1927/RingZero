@@ -1,0 +1,354 @@
+---
+title: Concurrent Task Scheduler in C++
+description: Build a modern C++20 thread-safe task scheduler with generic template submission, RAII worker lifecycle, and future results.
+---
+
+import { Badge } from "@astrojs/starlight/components";
+import ReferenceSolution from "../../../components/ReferenceSolution.astro";
+
+<div class="proj-tags">
+  <Badge text="Intermediate" variant="caution" />
+  <Badge text="C++" variant="note" />
+</div>
+
+<dl class="project-facts">
+  <div>
+    <dt>Language</dt>
+    <dd>C++20</dd>
+  </div>
+  <div>
+    <dt>Platform</dt>
+    <dd>ISO C++ (POSIX & Win32)</dd>
+  </div>
+  <div>
+    <dt>Builds</dt>
+    <dd>
+      <code>task_scheduler_test</code>
+    </dd>
+  </div>
+</dl>
+
+**Before you start:** review [C++ templates & metaprogramming](/cpp/fundamentals/templates/), [Polymorphism & dynamic dispatch](/cpp/fundamentals/polymorphism/), [RAII and lifetimes](/cpp/fundamentals/raii/), and [C++ atomics & memory models](/cpp/concurrency/atomics/).
+
+<nav class="project-outline" aria-label="Project sections">
+  <span>Project guide</span>
+  <a href="#1-overview-objective">Overview</a>
+  <a href="#2-prerequisites-concepts">Prerequisites</a>
+  <a href="#6-implementation-stages">Stages</a>
+  <a href="#10-verification-test-plan">Verification</a>
+  <a href="#12-reference-implementation">Solution</a>
+</nav>
+
+## 1. Overview & Objective
+
+In C, implementing a thread pool requires casting raw `void*` argument pointers and managing function pointer callbacks without compile-time type safety. In modern C++, we can design an industrial-grade **Concurrent Task Scheduler** that:
+
+1. Accepts **any arbitrary callable** (free functions, lambdas with state, member function binds, functors) with arbitrary arguments via variadic template perfect forwarding.
+2. Returns a strongly-typed `std::future<ReturnT>` directly to the caller, allowing seamless asynchronous value retrieval and transparent exception propagation.
+3. Enforces strict **RAII lifetime guarantees**: the scheduler's destructor guarantees all queued or in-flight tasks are handled and all worker threads are joined cleanly before memory teardown, preventing deadlocks or dangling reference crashes.
+
+## 2. Prerequisites & Concepts
+
+- **Variadic Templates & Perfect Forwarding**: Using `template <typename F, typename... Args>` and `std::forward<Args>(args)...` to preserve value category (lvalues vs rvalues) into the task closure.
+- **Polymorphic Type Erasure**: A task queue cannot store templated types directly because each lambda has a unique, anonymous type. We define an abstract interface `ITask` with `virtual void execute() = 0` and wrap arbitrary callables in a concrete `TaskImpl<Callable>` derived type.
+- **Asynchronous Results**: `std::packaged_task<R()>` decouples the callable invocation from the storage of its return value or thrown exception.
+- **Thread Synchronization**: Guarding queue state with `std::mutex`, `std::unique_lock`, and signaling idle workers via `std::condition_variable`.
+
+## 3. System Architecture
+
+```text
+ Calling Threads                       Task Scheduler                         Worker Threads
+┌──────────────────┐               ┌──────────────────────┐                 ┌────────────────┐
+│ submit([]{...})  │ ──template──► │   Polymorphic Queue  │ ──condvar wait──►│ Worker 0 (join)│
+│  returns future  │               │ [ITask*][ITask*]...  │                 ├────────────────┤
+└──────────────────┘               └──────────────────────┘                 │ Worker 1 (join)│
+                                              ▲                             ├────────────────┤
+                                      RAII Destructor                       │ Worker N (join)│
+                                    signals stop & joins                    └────────────────┘
+```
+
+## 4. Data Structures & Class Layout
+
+```cpp
+#include <vector>
+#include <queue>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+
+// Stage 1: Abstract type-erased task interface
+struct ITask {
+    virtual ~ITask() = default;
+    virtual void execute() = 0;
+};
+
+// Stage 2: Templated concrete wrapper holding the packaged task
+template <typename F>
+class TaskImpl final : public ITask {
+    F func;
+public:
+    explicit TaskImpl(F &&f) : func(std::move(f)) {}
+    void execute() override { func(); }
+};
+
+// Stage 3: The RAII Task Scheduler
+class TaskScheduler {
+    std::vector<std::thread> workers;
+    std::queue<std::unique_ptr<ITask>> taskQueue;
+
+    std::mutex queueMutex;
+    std::condition_variable cv;
+    bool stopRequested{false};
+};
+```
+
+## 5. Public Interface Specification
+
+```cpp
+class TaskScheduler {
+public:
+    // Spawns threadCount pre-warmed worker threads
+    explicit TaskScheduler(size_t threadCount = std::thread::hardware_concurrency());
+
+    // Non-copyable, non-movable (strict RAII ownership)
+    TaskScheduler(const TaskScheduler&) = delete;
+    TaskScheduler& operator=(const TaskScheduler&) = delete;
+
+    // RAII destructor: drains tasks and joins all threads
+    ~TaskScheduler();
+
+    // Submits callable and returns std::future of the return type
+    template <typename F, typename... Args>
+    auto submit(F &&f, Args&&... args)
+        -> std::future<std::invoke_result_t<F, Args...>>;
+
+    // Returns count of active worker threads
+    size_t workerCount() const noexcept;
+};
+```
+
+## 6. Implementation Stages
+
+### Stage 1: Polymorphic Task Wrapper
+
+Define `ITask` with a pure virtual `execute()` and virtual destructor. Implement `TaskImpl` templated on the callable type.
+
+### Stage 2: Worker Loop & Predicate
+
+In each worker thread, acquire `std::unique_lock<std::mutex>`, wait on `cv.wait(lock, [this]{ return stopRequested || !taskQueue.empty(); })`. Pop the head `std::unique_ptr<ITask>`, release the lock, and invoke `task->execute()`.
+
+### Stage 3: Generic `submit()` Forwarding
+
+Bind `f` and `args` into a zero-argument lambda, package it into a `std::packaged_task<ReturnType()>`, extract its `std::future`, and push a `std::make_unique<TaskImpl<...>>` onto the synchronized queue.
+
+### Stage 4: RAII Destructor & Thread Joining
+
+Set `stopRequested = true`, notify all workers with `cv.notify_all()`, and loop through `workers` calling `.join()`.
+
+## 7. Edge Cases & Concurrency Hazards
+
+- **Spurious Wakeups**: A thread waking up without a notification must never pop from an empty queue. Always use the predicate overload of `cv.wait(lock, predicate)`.
+- **Submissions After Destruction**: If `submit()` is called after `stopRequested` is set, throw `std::runtime_error("Scheduler has been shut down")` to prevent deadlocked futures.
+- **Exception Inside Worker**: If a task throws an exception, `std::packaged_task` captures the exception into the shared state. When the caller invokes `future.get()`, the exception is automatically rethrown into the calling thread.
+
+## 8. Undefined Behavior & Exception Safety
+
+- **Joining Deadlock**: If a worker thread submits a task that attempts to join the scheduler, a self-join deadlock will occur.
+- **Unjoined `std::thread`**: If a `std::thread` object is destroyed while still joinable (`joinable() == true`), the C++ runtime immediately aborts the process via `std::terminate()`. The scheduler destructor guarantees all threads are joined.
+
+## 9. Build & Tooling Setup
+
+Compile with C++20 and thread sanitization enabled:
+
+```bash
+clang++ -std=c++20 -O2 -Wall -Wextra -pthread -fsanitize=thread TaskSchedulerTest.cpp -o task_scheduler_test
+```
+
+## 10. Verification & Test Plan
+
+1. **Throughput Test**: Enqueue 100,000 parallel arithmetic jobs and verify aggregate sum.
+2. **Exception Test**: Enqueue a task that throws `std::runtime_error("error")` and assert `future.get()` rethrows the expected message.
+3. **Destruction Test**: Destroy scheduler while tasks are queued and confirm all queued tasks finish without memory leaks.
+
+## 11. Performance & Memory Profile
+
+| Metric                | C `thread_pool`                | C++ `TaskScheduler`                     |
+| :-------------------- | :----------------------------- | :-------------------------------------- |
+| **Type Safety**       | None (`void*` casts)           | Full compile-time static type checking  |
+| **Return Handling**   | Manual synchronizer struct     | Built-in `std::future<T>`               |
+| **Callable Overhead** | Raw function pointer (0 bytes) | `std::unique_ptr<ITask>` vptr (8 bytes) |
+| **Destruction**       | Manual `pool_destroy()` call   | Deterministic RAII stack cleanup        |
+
+## 12. Reference Implementation
+
+<ReferenceSolution title="TaskScheduler.hpp (Complete C++20 Reference Solution)" badge="Reveal Code">
+
+```cpp
+#pragma once
+
+#include <vector>
+#include <queue>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <functional>
+#include <type_traits>
+#include <stdexcept>
+#include <cassert>
+#include <iostream>
+
+class TaskScheduler {
+private:
+    struct ITask {
+        virtual ~ITask() = default;
+        virtual void execute() = 0;
+    };
+
+    template <typename F>
+    class TaskImpl final : public ITask {
+        F func;
+    public:
+        explicit TaskImpl(F &&f) : func(std::move(f)) {}
+        void execute() override { func(); }
+    };
+
+    std::vector<std::thread> workers;
+    std::queue<std::unique_ptr<ITask>> taskQueue;
+
+    mutable std::mutex queueMutex;
+    std::condition_variable cv;
+    bool stopRequested{false};
+
+    void workerRoutine() {
+        while (true) {
+            std::unique_ptr<ITask> task;
+            {
+                std::unique_lock<std::mutex> lock(queueMutex);
+                cv.wait(lock, [this] {
+                    return stopRequested || !taskQueue.empty();
+                });
+
+                if (stopRequested && taskQueue.empty()) {
+                    return; // Graceful exit
+                }
+
+                task = std::move(taskQueue.front());
+                taskQueue.pop();
+            }
+
+            if (task) {
+                task->execute();
+            }
+        }
+    }
+
+public:
+    explicit TaskScheduler(size_t threadCount = std::thread::hardware_concurrency()) {
+        size_t actualThreads = (threadCount == 0) ? 2 : threadCount;
+        workers.reserve(actualThreads);
+        for (size_t i = 0; i < actualThreads; ++i) {
+            workers.emplace_back(&TaskScheduler::workerRoutine, this);
+        }
+    }
+
+    TaskScheduler(const TaskScheduler &) = delete;
+    TaskScheduler &operator=(const TaskScheduler &) = delete;
+
+    ~TaskScheduler() {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            stopRequested = true;
+        }
+        cv.notify_all();
+
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+    }
+
+    template <typename F, typename... Args>
+    auto submit(F &&f, Args &&...args)
+        -> std::future<std::invoke_result_t<F, Args...>> {
+        using ReturnT = std::invoke_result_t<F, Args...>;
+
+        // Bind callable with forwarded arguments into a zero-arg lambda
+        auto taskLambda = [func = std::forward<F>(f),
+                           ...capturedArgs = std::forward<Args>(args)]() mutable -> ReturnT {
+            return std::invoke(std::move(func), std::move(capturedArgs)...);
+        };
+
+        auto packagedTask = std::make_shared<std::packaged_task<ReturnT()>>(std::move(taskLambda));
+        std::future<ReturnT> fut = packagedTask->get_future();
+
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            if (stopRequested) {
+                throw std::runtime_error("Cannot submit to stopped TaskScheduler");
+            }
+
+            auto wrapper = [packagedTask]() {
+                (*packagedTask)();
+            };
+
+            taskQueue.push(std::make_unique<TaskImpl<decltype(wrapper)>>(std::move(wrapper)));
+        }
+
+        cv.notify_one();
+        return fut;
+    }
+
+    size_t workerCount() const noexcept {
+        return workers.size();
+    }
+};
+
+// Verification Driver
+int main() {
+    TaskScheduler scheduler(4);
+
+    // 1. Return-value task
+    auto fut1 = scheduler.submit([](int a, int b) {
+        return a * b;
+    }, 6, 7);
+
+    // 2. State-mutation task
+    std::atomic<int> counter{0};
+    std::vector<std::future<void>> voidFutures;
+    for (int i = 0; i < 100; ++i) {
+        voidFutures.push_back(scheduler.submit([&counter]() {
+            counter.fetch_add(1, std::memory_order_relaxed);
+        }));
+    }
+
+    for (auto &f : voidFutures) {
+        f.get();
+    }
+
+    assert(fut1.get() == 42);
+    assert(counter.load() == 100);
+
+    // 3. Exception propagation test
+    auto errFut = scheduler.submit([]() -> int {
+        throw std::runtime_error("Simulated worker error");
+    });
+
+    bool caught = false;
+    try {
+        errFut.get();
+    } catch (const std::runtime_error &e) {
+        caught = true;
+    }
+    assert(caught);
+
+    std::cout << "All C++ TaskScheduler verification tests passed successfully.\n";
+    return 0;
+}
+```
+
+</ReferenceSolution>

@@ -1,0 +1,153 @@
+---
+title: "<functional> & Callables"
+description: Callables, lambdas, type erasure, std::function layout, Small Buffer Optimization (SBO), and std::move_only_function in modern C++.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+In C++, a **callable** is any entity that can be invoked with function call syntax `f(args...)`. The `<functional>` header provides type-erased wrappers, binders, and invocation utilities for handling heterogeneous callables uniformly.
+
+---
+
+## The Taxonomy of C++ Callables
+
+Modern C++ recognizes five distinct kinds of callables:
+
+1. **Free function pointers**: `void (*fp)(int)` — raw code address, zero size overhead beyond 8-byte pointer.
+2. **Member function pointers**: `void (MyClass::*mfp)(int)` — 16 bytes on 64-bit Itanium ABI (holds function address + `this` offset adjustment).
+3. **Functors (Function Objects)**: Classes/structs overloading `operator()`. Inlines cleanly with state.
+4. **Lambdas**: Compiler-generated anonymous functor structs capturing enclosing variables by value or reference.
+5. **Type-erased wrappers**: `std::function` and `std::move_only_function`.
+
+```cpp
+#include <iostream>
+#include <functional>
+
+struct Multiplier {
+    int factor;
+    int operator()(int val) const { return val * factor; }
+};
+
+int addOne(int x) { return x + 1; }
+
+int main() {
+    int offset = 10;
+    auto lambda = [offset](int x) { return x + offset; };
+
+    Multiplier mult{3};
+
+    // Invoking all three uniformly via std::invoke (C++17)
+    std::cout << std::invoke(addOne, 5) << '\n';       // 6
+    std::cout << std::invoke(mult, 5) << '\n';         // 15
+    std::cout << std::invoke(lambda, 5) << '\n';       // 15
+}
+```
+
+---
+
+## Anatomy of a Lambda Expression
+
+When the compiler encounters a lambda expression, it synthesizes an anonymous class:
+
+```cpp
+int threshold = 100;
+auto isOver = [threshold](int value) -> bool {
+    return value > threshold;
+};
+```
+
+The compiler transforms this into:
+
+```cpp
+class __lambda_unique_id {
+    int threshold; // Captured state
+public:
+    __lambda_unique_id(int val) : threshold(val) {}
+
+    bool operator()(int value) const {
+        return value > threshold;
+    }
+};
+```
+
+- **Stateless lambdas (`[]`)**: Have an implicit conversion operator to a raw C function pointer `bool (*)(int)`, costing zero overhead.
+- **Stateful lambdas (`[&]`, `[=]`, `[val]`)**: Store references or values in the compiler-generated struct.
+
+---
+
+## `std::function` & Type Erasure
+
+`std::function<R(Args...)>` is a polymorphic wrapper capable of storing, copying, and invoking any callable that matches the signature `R(Args...)`.
+
+### The Under-the-Hood Architecture
+
+Because lambdas, functors, and function pointers have completely different sizes and types, `std::function` uses **type erasure**:
+
+```text
+std::function instance (32 to 48 bytes):
+┌───────────────────────────────┬────────────────────────────────────────┐
+│ Function Pointer Table / vptr │ [0] invoke_fn: invokes target callable │
+│                               │ [1] manager_fn: copy, move, destroy    │
+├───────────────────────────────┴────────────────────────────────────────┤
+│ Small Buffer Storage (SBO): 16 to 24 bytes                             │
+│ ┌────────────────────────────────────────────────────────────────────┐ │
+│ │ Fits small functors/lambdas directly inline (NO HEAP ALLOCATION)   │ │
+│ └────────────────────────────────────────────────────────────────────┘ │
+│ OR: pointer to heap-allocated object if callable > SBO buffer          │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Small Buffer Optimization (SBO)
+
+To minimize latency, standard library implementations (libstdc++, libc++) allocate an internal inline buffer (typically 16 bytes on libstdc++, 24 bytes on MSVC/libc++):
+
+- **If the callable's size is within the SBO buffer** and is `nothrow` movable: The callable is constructed **inline** inside the `std::function` struct. No heap allocation occurs.
+- **If the callable's size exceeds the SBO buffer**: `std::function` executes a dynamic heap allocation (`operator new`) to store the target object.
+
+```cpp
+// SBO Active: No dynamic memory allocation
+auto smallCallable = [a = 10, b = 20]() { return a + b; };
+std::function<int()> f1 = smallCallable;
+
+// SBO Exceeded: Triggers heap allocation (sizeof capture = 64 bytes)
+struct BigState { char data[64]; };
+BigState big;
+auto largeCallable = [big]() { return big.data[0]; };
+std::function<char()> f2 = largeCallable; // Allocates on heap!
+```
+
+---
+
+## Systems Cost: `std::function` vs Function Pointers
+
+In performance-critical event loops, `std::function` has measurable overhead compared to direct calls:
+
+1. **Indirect branch**: Invocations dispatch through a function pointer, defeating compile-time inlining and branch prediction.
+2. **Cache locality**: If SBO is exceeded, dereferencing the heap-allocated target incurs a data cache miss.
+3. **Destruction & copy costs**: Every copy or destruction invokes the `manager_fn` dispatch table.
+
+Where feasible in template code, prefer accepting generic callables via template parameters `template <typename F> void execute(F &&fn)` rather than `const std::function&`.
+
+---
+
+## Move-Only Callables: `std::move_only_function` (C++23)
+
+A long-standing flaw of `std::function` is that it requires stored callables to be **copy-constructible**. This prevents wrapping callables that capture move-only types like `std::unique_ptr` or file handles:
+
+```cpp
+#include <memory>
+#include <functional>
+
+auto task = [ptr = std::make_unique<int>(42)]() {
+    return *ptr;
+};
+
+// COMPILER ERROR with std::function:
+// std::function requires copyability, but unique_ptr is move-only!
+// std::function<int()> bad = std::move(task);
+
+// VALID in C++23:
+// std::move_only_function<int()> good = std::move(task);
+```
+
+For C++17/C++20 systems pipelines that pass move-only tasks, engineers implement a custom `MoveOnlyTask` wrapper or utilize template task queues.

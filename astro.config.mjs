@@ -115,6 +115,28 @@ export default defineConfig({
                   label: "Templates & Metaprogramming",
                   slug: "cpp/fundamentals/templates",
                 },
+                {
+                  label: "Polymorphism & Virtual Dispatch",
+                  slug: "cpp/fundamentals/polymorphism",
+                },
+              ],
+            },
+            {
+              label: "Standard Library",
+              collapsed: true,
+              items: [
+                {
+                  label: "<iostream> & Formatting",
+                  slug: "cpp/standard-library/iostream",
+                },
+                {
+                  label: "<functional> & Callables",
+                  slug: "cpp/standard-library/functional",
+                },
+                {
+                  label: "Containers & Views",
+                  slug: "cpp/standard-library/containers-and-views",
+                },
               ],
             },
             {
@@ -162,6 +184,10 @@ export default defineConfig({
             { label: "CLI Task Manager", slug: "projects/cli-task-manager" },
             { label: "Thread Pool", slug: "projects/thread-pool" },
             { label: "Arena Allocator", slug: "projects/arena-allocator" },
+            {
+              label: "Concurrent Task Scheduler",
+              slug: "projects/cpp-task-scheduler",
+            },
           ],
         },
         {
